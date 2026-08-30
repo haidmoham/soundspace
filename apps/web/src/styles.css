@@ -1150,7 +1150,7 @@ input[type="range"] { accent-color: var(--amber); }
 
 .search-result {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: 38px 72px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 18px 0;
@@ -1161,6 +1161,39 @@ input[type="range"] { accent-color: var(--amber); }
   background: transparent;
   cursor: pointer;
   transition: transform 150ms var(--ease-out), opacity 150ms ease, background-color 150ms ease;
+}
+
+.weather-glyph {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 56% 44% 62% 38% / 42% 59% 41% 58%;
+  color: var(--bone);
+  background: rgb(22 8 24 / 44%);
+  box-shadow: 4px 4px 0 rgb(20 6 22 / 34%);
+  animation: weather-glyph-hover 3.8s var(--ease-in-out) infinite alternate;
+}
+
+.weather-glyph svg {
+  width: 23px;
+  height: 23px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
+}
+
+.weather-glyph--rain { color: #ff7796; transform: rotate(-5deg); }
+.weather-glyph--sun { color: #fff15b; transform: rotate(4deg); }
+.weather-glyph--snow { color: #dff7ff; transform: rotate(-2deg); }
+
+@keyframes weather-glyph-hover {
+  from { border-radius: 56% 44% 62% 38% / 42% 59% 41% 58%; translate: 0 1px; }
+  to { border-radius: 42% 58% 39% 61% / 61% 38% 62% 39%; translate: 0 -2px; }
 }
 
 .search-result img,
@@ -1291,7 +1324,9 @@ input[type="range"] { accent-color: var(--amber); }
   .landing-page { width: calc(100% - 24px); }
   .search-sheet--landing .search-header h2 { font-size: 57px; }
   .search-sheet--landing .search-header::after { display: none; }
-  .search-result { grid-template-columns: 58px minmax(0, 1fr); }
+  .search-result { grid-template-columns: 32px 58px minmax(0, 1fr); }
+  .weather-glyph { width: 30px; height: 30px; }
+  .weather-glyph svg { width: 20px; height: 20px; }
   .search-result img,
   .result-placeholder { width: 58px; height: 46px; }
   .search-result i { display: none; }
