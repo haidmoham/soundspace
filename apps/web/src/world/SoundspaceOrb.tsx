@@ -141,6 +141,60 @@ function drawBlob(
   context.restore();
 }
 
+const TITLE_INKS = {
+  dark: "#21121e",
+  light: "#fff1dd",
+} as const;
+
+function relativeLuminance(value: string): number {
+  const normalized = value.replace("#", "");
+  const expanded = normalized.length === 3
+    ? normalized.split("").map((channel) => `${channel}${channel}`).join("")
+    : normalized;
+  if (!/^[\da-f]{6}$/i.test(expanded)) return 0;
+
+  const channels = [0, 2, 4].map((offset) => {
+    const srgb = Number.parseInt(expanded.slice(offset, offset + 2), 16) / 255;
+    return srgb <= 0.04045
+      ? srgb / 12.92
+      : ((srgb + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
+}
+
+function contrastRatio(first: string, second: string): number {
+  const light = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const dark = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function titleInkFor(background: string): typeof TITLE_INKS.dark | typeof TITLE_INKS.light {
+  return contrastRatio(background, TITLE_INKS.dark) >= contrastRatio(background, TITLE_INKS.light)
+    ? TITLE_INKS.dark
+    : TITLE_INKS.light;
+}
+
+function drawTitleLine(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  background: string,
+) {
+  const ink = titleInkFor(background);
+  const outline = ink === TITLE_INKS.dark ? TITLE_INKS.light : TITLE_INKS.dark;
+  context.fillStyle = ink;
+  context.strokeStyle = outline;
+  context.lineJoin = "round";
+  context.lineWidth = 5;
+  context.shadowColor = ink === TITLE_INKS.dark
+    ? "rgba(255, 241, 221, 0.28)"
+    : "rgba(21, 8, 17, 0.62)";
+  context.shadowBlur = 16;
+  context.strokeText(text, x, y);
+  context.fillText(text, x, y);
+}
+
 function createTitleTexture(
   title: string,
   profile: WeatherProfile,
@@ -158,18 +212,17 @@ function createTitleTexture(
   context.globalAlpha = 0.86;
   drawBlob(context, 552, 600, 590, 226, 0.1, profile.palette.glow);
   context.globalAlpha = 1;
-  context.fillStyle = "#f5e8d8";
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.shadowColor = "rgba(21, 8, 17, 0.45)";
-  context.shadowBlur = 18;
   // The orb reads as a hand-made track label. It uses the utility face while
   // the page title stays expressive, so both feel from the same room without
-  // becoming a duplicate lockup.
+  // becoming a duplicate lockup. Each fragment chooses its ink from the
+  // weather color beneath it. The opposite ink becomes a fine outline so the
+  // intentional crop remains readable when letters leave the blob.
   context.font = '700 92px "Space Mono", ui-monospace, monospace';
-  context.fillText(first, 500, 410);
+  drawTitleLine(context, first, 500, 410, profile.palette.cloudLight);
   context.font = '700 106px "Space Mono", ui-monospace, monospace';
-  context.fillText(second, 544, 590);
+  drawTitleLine(context, second, 544, 590, profile.palette.glow);
   context.shadowBlur = 0;
 
   const texture = new CanvasTexture(canvas);

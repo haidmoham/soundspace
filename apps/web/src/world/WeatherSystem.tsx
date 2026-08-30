@@ -34,8 +34,10 @@ export type WeatherSystemProps = {
 export type VisualQuality = "low" | "balanced" | "max";
 
 export const VISUAL_QUALITY = {
-  low: { density: 0.38, dpr: 1, label: "low" },
-  balanced: { density: 0.68, dpr: 1.35, label: "balanced" },
+  // The authored names stay playful. Their runtime density is a literal
+  // three-position scale: no optional density, half, or all of it.
+  low: { density: 0, dpr: 1, label: "low" },
+  balanced: { density: 0.5, dpr: 1.35, label: "balanced" },
   max: { density: 1, dpr: 1.8, label: "max" },
 } as const satisfies Record<VisualQuality, { density: number; dpr: number; label: string }>;
 
@@ -149,7 +151,9 @@ function qualityDensity(quality: VisualQuality) {
 
 function createCloudSeeds(profile: WeatherProfile, quality: VisualQuality): readonly CloudSeed[] {
   const random = createRandom(profile.seed + 17);
-  const count = 6 + Math.round(profile.layers.cloudDensity * 22 * qualityDensity(quality));
+  const count = Math.round(
+    (6 + profile.layers.cloudDensity * 22) * qualityDensity(quality),
+  );
   return Array.from({ length: count }, (_, index) => {
     const depth = random();
     return {
@@ -172,7 +176,9 @@ function createCloudSeeds(profile: WeatherProfile, quality: VisualQuality): read
 
 function createMistSeeds(profile: WeatherProfile, quality: VisualQuality): readonly MistSeed[] {
   const random = createRandom(profile.seed + 41);
-  const count = 3 + Math.round(profile.layers.mistDensity * 8 * qualityDensity(quality));
+  const count = Math.round(
+    (3 + profile.layers.mistDensity * 8) * qualityDensity(quality),
+  );
   return Array.from({ length: count }, () => ({
     opacity: 0.035 + random() * 0.09,
     position: [
@@ -206,7 +212,9 @@ function createRainPositions(seed: number, count: number, near: boolean) {
 
 function createParticleData(profile: WeatherProfile, quality: VisualQuality) {
   const random = createRandom(profile.seed + 83);
-  const count = 32 + Math.round(profile.layers.particleDensity * 240 * qualityDensity(quality));
+  const count = Math.round(
+    (32 + profile.layers.particleDensity * 240) * qualityDensity(quality),
+  );
   const positions = new Float32Array(count * 3);
   const origins = new Float32Array(count * 3);
   const phases = new Float32Array(count);
@@ -224,7 +232,9 @@ function createParticleData(profile: WeatherProfile, quality: VisualQuality) {
 
 function createWindPositions(profile: WeatherProfile, quality: VisualQuality) {
   const random = createRandom(profile.seed + 307);
-  const count = 36 + Math.round(profile.layers.turbulence * 180 * qualityDensity(quality));
+  const count = Math.round(
+    (36 + profile.layers.turbulence * 180) * qualityDensity(quality),
+  );
   const positions = new Float32Array(count * 6);
   for (let index = 0; index < count; index += 1) {
     const offset = index * 6;
@@ -239,7 +249,9 @@ function createWindPositions(profile: WeatherProfile, quality: VisualQuality) {
 
 function createSnowData(profile: WeatherProfile, quality: VisualQuality) {
   const random = createRandom(profile.seed + 401);
-  const count = 100 + Math.round(700 * profile.layers.precipitationDensity * qualityDensity(quality));
+  const count = Math.round(
+    (100 + 700 * profile.layers.precipitationDensity) * qualityDensity(quality),
+  );
   const positions = new Float32Array(count * 3);
   const origins = new Float32Array(count * 3);
   const phases = new Float32Array(count);
@@ -261,7 +273,9 @@ function createSnowData(profile: WeatherProfile, quality: VisualQuality) {
 
 function createSolarData(profile: WeatherProfile, quality: VisualQuality) {
   const random = createRandom(profile.seed + 503);
-  const count = 80 + Math.round(480 * profile.layers.particleDensity * qualityDensity(quality));
+  const count = Math.round(
+    (80 + 480 * profile.layers.particleDensity) * qualityDensity(quality),
+  );
   const positions = new Float32Array(count * 3);
   const origins = new Float32Array(count * 3);
   const phases = new Float32Array(count);
@@ -644,7 +658,9 @@ function RainSheet({
     const smoothing = 1 - Math.exp(-frameDelta * 3.2);
     rainfallVolumeRef.current +=
       (rainfallVolume - rainfallVolumeRef.current) * smoothing;
-    const activeCount = Math.max(1, Math.floor(count * rainfallVolumeRef.current));
+    const activeCount = count === 0
+      ? 0
+      : Math.max(1, Math.floor(count * rainfallVolumeRef.current));
     lines.current.geometry.setDrawRange(0, activeCount * 2);
     if (material.current) {
       material.current.opacity =
