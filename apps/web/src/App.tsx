@@ -196,28 +196,56 @@ function TrackSearch({
         {!searching && results.length === 0 ? (
           <p className="search-state">choose a song. we will suggest its weather before you enter.</p>
         ) : null}
-        {results.map((track, index) => (
-          <button
-            className="search-result"
-            disabled={resolving}
-            key={track.id}
-            onClick={() => onChoose(track)}
-            type="button"
-          >
-            {track.artworkUrl ? (
-              <img alt="" src={track.artworkUrl} />
-            ) : (
-              <span aria-hidden="true" className="result-placeholder" />
-            )}
-            <span>
-              <strong>{displayCopy(track.title)}</strong>
-              <small>{displayCopy(track.artists.join(", "))}</small>
-            </span>
-            <i>{String(index + 1).padStart(2, "0")} / open</i>
-          </button>
-        ))}
+        {results.map((track, index) => {
+          const weather = createSongWeatherProgram(track).classification.primary;
+          return (
+            <button
+              className="search-result"
+              disabled={resolving}
+              key={track.id}
+              onClick={() => onChoose(track)}
+              type="button"
+            >
+              <WeatherGlyph weather={weather} />
+              {track.artworkUrl ? (
+                <img alt="" src={track.artworkUrl} />
+              ) : (
+                <span aria-hidden="true" className="result-placeholder" />
+              )}
+              <span>
+                <strong>{displayCopy(track.title)}</strong>
+                <small>{displayCopy(track.artists.join(", "))}</small>
+              </span>
+              <i>{String(index + 1).padStart(2, "0")} / open</i>
+            </button>
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+function WeatherGlyph({ weather }: { weather: WeatherKind }) {
+  return (
+    <span aria-label={`recommended weather: ${weather}`} className={`weather-glyph weather-glyph--${weather}`} role="img">
+      <svg aria-hidden="true" viewBox="0 0 32 32">
+        {weather === "rain" ? (
+          <>
+            <path d="M7 15c.3-4 3.2-6.6 7-6.3 1.7-2.3 5.8-1.7 6.7 1.3 3.2.2 4.8 2.2 4.3 5.2" />
+            <path d="m10 19-2 5m7-5-2 7m7-7-2 5" />
+          </>
+        ) : null}
+        {weather === "sun" ? (
+          <>
+            <circle cx="16" cy="16" r="5.2" />
+            <path d="M16 4v4m0 16v4M4 16h4m16 0h4M7.5 7.5l2.8 2.8m11.4 11.4 2.8 2.8m0-17-2.8 2.8M10.3 21.7l-2.8 2.8" />
+          </>
+        ) : null}
+        {weather === "snow" ? (
+          <path d="M16 4v24M5.6 10l20.8 12M5.6 22l20.8-12M12 6.5l4 3 4-3M12 25.5l4-3 4 3M6.5 14l4 .5-1.2 3.8m16.2-.3-4-.5 1.2-3.8" />
+        ) : null}
+      </svg>
+    </span>
   );
 }
 

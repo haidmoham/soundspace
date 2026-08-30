@@ -34,6 +34,7 @@ test.describe("song journeys", () => {
         ),
       });
       await expect(result).toBeVisible();
+      await expect(result.getByRole("img", { name: /^recommended weather: (rain|sun|snow)$/ })).toBeVisible();
       await result.click();
 
       const shell = page.locator("main.player-shell");
