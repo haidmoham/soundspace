@@ -9,7 +9,11 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\
 test.describe("song journeys", () => {
   for (const songCase of corpus.tracks) {
     test(`${songCase.caseId}: search, pregame, and enter`, async ({ page }, testInfo) => {
+      const consoleErrors: string[] = [];
       const pageErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error") consoleErrors.push(message.text());
+      });
       page.on("pageerror", (error) => pageErrors.push(error.message));
       await page.emulateMedia({ reducedMotion: "reduce" });
       await installFakeYouTube(page, corpus.tracks);
@@ -54,6 +58,7 @@ test.describe("song journeys", () => {
       await expect(page.locator(".artist-line")).not.toContainText(" - Topic");
       await expect(page.locator("main.player-shell")).toHaveCount(1);
       await expect(page.locator(".youtube-player-host")).toHaveCount(1);
+      expect(consoleErrors).toEqual([]);
       expect(pageErrors).toEqual([]);
 
       if (process.env.SOUNDSPACE_E2E_CAPTURE === "1") {

@@ -49,6 +49,7 @@ const fragmentShader = /* glsl */ `
   uniform float uHaze;
   uniform float uStorm;
   uniform float uSunlight;
+  uniform float uVibrance;
   uniform vec3 uCoreDark;
   uniform vec3 uCoreLight;
   uniform vec3 uGlow;
