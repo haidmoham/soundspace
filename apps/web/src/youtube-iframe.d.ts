@@ -29,11 +29,12 @@ declare global {
   };
 
   type YouTubePlayer = {
+    cueVideoById(videoId: string): void;
     destroy(): void;
     getCurrentTime(): number;
     getDuration(): number;
     getPlayerState(): YouTubePlayerState;
-    getVideoData(): YouTubeVideoData;
+    getVideoData(): YouTubeVideoData | undefined;
     loadVideoById(videoId: string): void;
     pauseVideo(): void;
     playVideo(): void;

@@ -65,6 +65,25 @@ function clamp(value: number, lower: number, upper: number): number {
   return Math.min(Math.max(value, lower), upper);
 }
 
+function playbackMilliseconds(seconds: number): number {
+  return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds * 1_000)) : 0;
+}
+
+function displayArtist(videoAuthor: string | undefined, requestedArtist: string): string {
+  if (!videoAuthor) return requestedArtist;
+
+  const topicSuffix = " - Topic";
+  if (requestedArtist.endsWith(topicSuffix)) return requestedArtist;
+
+  const channelArtist = videoAuthor.endsWith(topicSuffix)
+    ? videoAuthor.slice(0, -topicSuffix.length)
+    : videoAuthor;
+  return channelArtist.toLocaleLowerCase("en-US") ===
+    requestedArtist.toLocaleLowerCase("en-US")
+    ? requestedArtist
+    : channelArtist;
+}
+
 function errorForPlayerCode(code: YouTubePlayerErrorEvent["data"]): string {
   switch (code) {
     case 2:
@@ -83,7 +102,6 @@ function errorForPlayerCode(code: YouTubePlayerErrorEvent["data"]): string {
 
 export function useYouTubePlayer(): YouTubePlayerController {
   const playerRef = useRef<YouTubePlayer | null>(null);
-  const hostElementRef = useRef<HTMLDivElement | null>(null);
   const selectedTrackRef = useRef<YouTubeResolvedTrack | null>(null);
   const stateRef = useRef<PlaybackState>(EMPTY_PLAYBACK_STATE);
   const [playerHost, setPlayerHost] = useState<HTMLDivElement | null>(null);
@@ -94,7 +112,6 @@ export function useYouTubePlayer(): YouTubePlayerController {
   );
 
   const playerHostRef = useCallback((element: HTMLDivElement | null) => {
-    hostElementRef.current = element;
     setPlayerHost(element);
   }, []);
 
@@ -104,23 +121,28 @@ export function useYouTubePlayer(): YouTubePlayerController {
     if (!player || !selectedTrack) return;
 
     const videoData = player.getVideoData();
-    const durationSeconds = player.getDuration();
-    const positionSeconds = player.getCurrentTime();
-    const isPlaying = player.getPlayerState() === 1;
-    const title = videoData.title || selectedTrack.title;
-    const author = videoData.author || selectedTrack.artists.join(", ");
-    const videoId = videoData.video_id || selectedTrack.youtubeVideoId;
+    const videoMatchesSelection =
+      videoData?.video_id === selectedTrack.youtubeVideoId;
+    const durationSeconds = videoMatchesSelection ? player.getDuration() : 0;
+    const positionSeconds = videoMatchesSelection ? player.getCurrentTime() : 0;
+    const isPlaying = videoMatchesSelection && player.getPlayerState() === 1;
+    const requestedArtist = selectedTrack.artists.join(", ");
+    const artist = displayArtist(
+      videoMatchesSelection ? videoData?.author : undefined,
+      requestedArtist,
+    );
+    const videoId = selectedTrack.youtubeVideoId;
     const nextState: PlaybackState = {
       trackId: videoId,
       track: {
         ...selectedTrack,
         id: videoId,
-        title,
-        artists: author ? [author] : selectedTrack.artists,
+        title: selectedTrack.title,
+        artists: [artist],
         uri: videoId,
       },
-      positionMs: Math.max(0, Math.round(positionSeconds * 1_000)),
-      durationMs: Math.max(0, Math.round(durationSeconds * 1_000)),
+      positionMs: playbackMilliseconds(positionSeconds),
+      durationMs: playbackMilliseconds(durationSeconds),
       isPlaying,
     };
     stateRef.current = nextState;
@@ -132,13 +154,15 @@ export function useYouTubePlayer(): YouTubePlayerController {
 
     let disposed = false;
     let player: YouTubePlayer | null = null;
+    const mountElement = document.createElement("div");
+    playerHost.replaceChildren(mountElement);
     setPhase("loading-api");
     setError(null);
 
     void loadIframeApi()
       .then((Player) => {
-        if (disposed || !hostElementRef.current) return;
-        player = new Player(hostElementRef.current, {
+        if (disposed || !mountElement.isConnected) return;
+        player = new Player(mountElement, {
           height: 1,
           playerVars: {
             autoplay: 0,
@@ -180,6 +204,7 @@ export function useYouTubePlayer(): YouTubePlayerController {
     return () => {
       disposed = true;
       player?.destroy();
+      playerHost.replaceChildren();
       if (playerRef.current === player) playerRef.current = null;
       stateRef.current = EMPTY_PLAYBACK_STATE;
       setPlaybackState(EMPTY_PLAYBACK_STATE);
@@ -231,14 +256,22 @@ export function useYouTubePlayer(): YouTubePlayerController {
     [sampleState],
   );
 
-  const selectTrack = async (track: YouTubeResolvedTrack) => {
+  const selectTrack = useCallback(async (track: YouTubeResolvedTrack) => {
     const player = playerRef.current;
     if (!player) throw new Error("still loading");
     selectedTrackRef.current = track;
     setError(null);
-    player.loadVideoById(track.youtubeVideoId);
-    sampleState();
-  };
+    const nextState: PlaybackState = {
+      trackId: track.youtubeVideoId,
+      track,
+      positionMs: 0,
+      durationMs: 0,
+      isPlaying: false,
+    };
+    stateRef.current = nextState;
+    setPlaybackState(nextState);
+    player.cueVideoById(track.youtubeVideoId);
+  }, []);
 
   return {
     error,
