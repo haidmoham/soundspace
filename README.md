@@ -1,133 +1,104 @@
 # soundspace
 
-Soundspace is an expressive Spotify web player. This repository contains the
-first vertical slice: Spotify authentication, browser playback, normalized
-playback state, track selection, and a deliberately small player surface.
+a small youtube-backed player.
 
-The semantic timeline, concept graph, database-backed song semantics, and
-Three.js world are intentionally not part of this slice.
+the first slice does one thing: find a track, cache the youtube video id, play
+it in the browser, and let the iframe player own the clock.
 
-## What runs
+## shape
 
-This is an npm-workspaces monorepo:
+- `apps/web` — vite, react, youtube iframe player api
+- `apps/api` — fastify, youtube data api, drizzle, sqlite
+- `packages/shared` — playback, climate, weather, semantics, audio, and visual state
 
-- `apps/web` — Vite, React, and TypeScript
-- `apps/api` — Fastify and TypeScript
-- `packages/shared` — the provider-independent `PlaybackState` and
-  `PlaybackProvider` contracts
+the web app samples `getCurrentTime()`, `getDuration()`, and
+`getPlayerState()` from youtube. there is no second timer pretending to be the
+audio clock.
 
-Spotify remains authoritative for the current track, playback position,
-duration, and playing state. The web app samples state from the Spotify Web
-Playback SDK; it does not create or interpolate a second audio clock.
+the room has its own ambient climate before playback starts. once a track
+begins, youtube progress samples the song's authored weather timeline. climate
+sets the baseline, semantics decides what can appear, and audio features only
+change how those things move. youtube does not expose pcm here, so the audio
+feature contract stays neutral for now.
 
-## Prerequisites
+## setup
 
-- Node.js 22 or newer
-- A Spotify Premium account
-- A Spotify developer app owned by a Premium account
-- Your Spotify account added to the app's test-user allowlist when the app is in
-  development mode
+you need node 22+ and a youtube data api v3 key.
 
-Spotify currently limits new development-mode apps to five allowlisted users.
-An unlisted user may complete the login screen but receive `403` responses from
-the APIs afterward.
+1. create a google cloud project.
+2. enable youtube data api v3.
+3. create a server api key and restrict it to youtube data api v3. use an ip
+   restriction when the api has a stable outbound ip.
+4. copy the env files:
 
-## Spotify Dashboard setup
-
-1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   and create an app.
-2. Open the app's settings and add this redirect URI exactly:
-
-   ```text
-   http://127.0.0.1:5173/api/auth/callback
+   ```bash
+   cp apps/api/.env.example apps/api/.env
+   cp apps/web/.env.example apps/web/.env
    ```
 
-   Spotify permits plain HTTP for explicit loopback addresses. Do not replace
-   `127.0.0.1` with `localhost`; the redirect URI used in the Dashboard,
-   authorization request, and token exchange must match exactly.
-3. In **Settings → Users Management**, add the Spotify name and email of every
-   account that will test the app.
-4. Copy the client ID and client secret into the API environment file described
-   below. Never place the client secret in a `VITE_` variable or browser code.
+5. put the key in `apps/api/.env`:
 
-The app requests these scopes:
+   ```text
+   YOUTUBE_API_KEY=...
+   ```
 
-```text
-streaming
-user-read-email
-user-read-private
-user-read-playback-state
-user-modify-playback-state
-```
+don't put the key in a `VITE_` variable. search stays on the server.
 
-## Local setup
+then:
 
 ```bash
-cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env
 npm install
-```
-
-Fill in `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in
-`apps/api/.env`. Replace `COOKIE_SECRET` with a random value, for example:
-
-```bash
-openssl rand -base64 32
-```
-
-Then start both workspaces:
-
-```bash
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The Vite server proxies
-`/api` to Fastify at `http://127.0.0.1:8787`, which lets the OAuth callback and
-signed session cookie stay on one browser origin during local development.
+open [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
-## Verification
+## what it does
 
-The repository-level gates are:
+`GET /api/youtube/resolve?artist=Driveways&title=Melancholy`
+
+the api:
+
+1. normalizes artist + title into a cache key.
+2. checks sqlite first.
+3. searches for `artist title official audio` on a miss.
+4. filters for syndicated, embeddable videos and confirms embed status.
+5. ranks the remaining results and caches the winner.
+
+the response says whether it came from `cache` or `youtube`.
+
+local sqlite data lives at `apps/api/.data/soundspace.sqlite` by default. set
+`SOUNDSPACE_DATABASE_PATH` to move it.
+
+## checks
 
 ```bash
+npm run lint
 npm run typecheck
 npm run build
 ```
 
-The live acceptance path is:
+the live path is:
 
-1. Open the Vite URL and choose **Connect Spotify**.
-2. Complete Spotify authorization and return to Soundspace.
-3. Wait for the status to read **browser playback online**.
-4. Press play on the preselected “melancholy” result, or open **choose track**
-   and select a search result.
-5. Confirm real Spotify audio, current-track metadata, advancing Spotify-derived
-   position, play/pause, seek, previous/next, and volume.
+1. load the default driveways / melancholy fixture.
+2. press play.
+3. hear youtube audio.
+4. pause and seek.
+5. watch the displayed time follow the iframe player.
+6. resolve the same track again and confirm `source: "cache"`.
 
-## Security and session boundary
+## notes
 
-Fastify owns the OAuth code exchange, client secret, refresh token, and refresh
-behavior. The browser receives only the short-lived user access token that the
-Spotify Web Playback SDK requires. The session identifier is stored in a signed,
-HTTP-only, same-site cookie.
+- youtube search uses a server api key, not oauth.
+- autoplay may be blocked. press play again if the browser asks for a gesture.
+- an embeddable search result can still become unavailable later. the player
+  reports iframe errors instead of inventing fallback playback.
+- the cache stores soundspace's resolved mapping, not a copy of the youtube
+  catalogue.
 
-For this local slice, session records live in API memory. Restarting Fastify
-therefore signs the user out. Production deployment will need a persistent,
-shared session store before horizontal scaling.
+official references:
 
-## Spotify platform constraint
-
-Spotify's current Web Playback SDK policy prohibits synchronizing Spotify audio
-with visual media and altering Spotify content. This basic player limits its
-visual response to ordinary transport/status feedback. Before implementing the
-planned semantic world, confirm that the intended experience complies with
-Spotify's platform rules or use an audio source for which the project has the
-required synchronization rights.
-
-Official references:
-
-- [Authorization Code flow](https://developer.spotify.com/documentation/web-api/tutorials/code-flow)
-- [Redirect URI rules](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri)
-- [Web Playback SDK player tutorial](https://developer.spotify.com/documentation/web-playback-sdk/howtos/web-app-player)
-- [Web Playback SDK terms and restrictions](https://developer.spotify.com/documentation/web-playback-sdk/tutorials/getting-started)
-- [Development-mode quota rules](https://developer.spotify.com/documentation/web-api/concepts/quota-modes)
+- [youtube search](https://developers.google.com/youtube/v3/docs/search/list)
+- [youtube iframe player](https://developers.google.com/youtube/iframe_api_reference)
+- [api key restrictions](https://docs.cloud.google.com/api-keys/docs/add-restrictions-api-keys)
+- [drizzle sqlite](https://orm.drizzle.team/docs/sqlite/get-started-sqlite)
