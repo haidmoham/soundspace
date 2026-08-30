@@ -32,6 +32,7 @@ import type { VisualQuality } from "./world/WeatherSystem";
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 const DEFAULT_ARTIST = "driveways";
 const DEFAULT_TITLE = "melancholy";
+const DEFAULT_SEARCH_QUERY = "this modern love bloc party";
 const DEFAULT_TRACK: PlaybackTrack = {
   id: "default-driveways-melancholy",
   uri: "soundspace:default:driveways-melancholy",
@@ -181,7 +182,7 @@ function TrackSearch({
             aria-label="search youtube"
             autoFocus
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="baby ara velvet"
+            placeholder={DEFAULT_SEARCH_QUERY}
             value={query}
           />
         </label>
@@ -221,7 +222,7 @@ function TrackSearch({
 }
 
 export default function App() {
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(DEFAULT_SEARCH_QUERY);
   const [searchResults, setSearchResults] = useState<YouTubeResolvedTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<YouTubeResolvedTrack | null>(
     null,
