@@ -1,9 +1,9 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap");
 
 :root {
   color: #f2e5d4;
   background: #130d15;
-  font-family: "DM Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -322,7 +322,7 @@ input:focus-visible {
 .search-header h2 {
   margin: 0;
   color: var(--bone);
-  font-family: "Instrument Serif", Georgia, serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-weight: 400;
   letter-spacing: -0.052em;
   line-height: 0.86;
@@ -338,9 +338,8 @@ input:focus-visible {
   max-width: 455px;
   margin: 32px 0;
   color: var(--bone-muted);
-  font-family: "Instrument Serif", Georgia, serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: 21px;
-  font-style: italic;
   line-height: 1.32;
 }
 
@@ -388,6 +387,43 @@ input:focus-visible {
 .premium-note { margin-top: 13px; }
 
 .session-controls { display: flex; align-items: center; gap: 25px; }
+
+.forecast-picker {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgb(242 229 212 / 22%);
+  border-radius: 55% 45% 51% 49% / 42% 57% 43% 58%;
+  background: rgb(22 12 27 / 34%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.forecast-picker span {
+  padding: 0 7px;
+  color: var(--muted);
+  font-size: 7px;
+  letter-spacing: 0.11em;
+}
+
+.forecast-picker button {
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 58% 42% 61% 39% / 44% 58% 42% 56%;
+  color: var(--bone-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  transition: color 140ms ease, background-color 160ms ease, transform 140ms var(--ease-out);
+}
+
+.forecast-picker button[aria-pressed="true"] {
+  color: #160d18;
+  background: var(--weather-accent, var(--bone));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--weather-accent, var(--bone)) 36%, transparent);
+}
 
 .text-button,
 .close-button {
@@ -494,9 +530,8 @@ input:focus-visible {
   bottom: 20px;
   left: 22px;
   color: var(--bone-muted);
-  font-family: "Instrument Serif", Georgia, serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: 21px;
-  font-style: italic;
   letter-spacing: -0.02em;
   opacity: 0.82;
   pointer-events: none;
@@ -524,9 +559,8 @@ input:focus-visible {
 
 .artwork-placeholder span {
   color: var(--bone);
-  font-family: "Instrument Serif", serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: 92px;
-  font-style: italic;
   text-shadow: 0 12px 30px rgb(0 0 0 / 40%);
 }
 
@@ -578,10 +612,11 @@ input:focus-visible {
 }
 
 .track-copy h1 {
-  max-width: 8.6ch;
-  font-size: clamp(88px, 12.2vw, 192px);
-  letter-spacing: -0.072em;
-  line-height: 0.72;
+  max-width: 10.5ch;
+  font-size: clamp(76px, 8vw, 132px);
+  font-weight: 500;
+  letter-spacing: -0.065em;
+  line-height: 0.78;
   text-shadow: 0 0.04em 0 rgb(31 18 28 / 68%), 0 0.17em 0.48em rgb(2 1 3 / 42%);
   overflow-wrap: anywhere;
 }
@@ -589,9 +624,10 @@ input:focus-visible {
 .artist-line {
   margin: 28px 0 4px;
   color: var(--bone);
-  font-family: "Instrument Serif", Georgia, serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: clamp(25px, 3vw, 43px);
-  font-style: italic;
+  font-weight: 500;
+  letter-spacing: -0.035em;
   line-height: 1.08;
 }
 
@@ -883,7 +919,7 @@ input[type="range"] { accent-color: var(--amber); }
 
 .close-button {
   color: #57364a;
-  font-family: "Instrument Serif", serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: 38px;
   line-height: 0.7;
 }
@@ -916,7 +952,7 @@ input[type="range"] { accent-color: var(--amber); }
   border: 0;
   color: #2a1726;
   background: transparent;
-  font-family: "Instrument Serif", Georgia, serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: clamp(26px, 4vw, 42px);
   letter-spacing: -0.025em;
 }
@@ -950,9 +986,8 @@ input[type="range"] { accent-color: var(--amber); }
   max-width: 52ch;
   margin: 26px 0 8px;
   color: #765265;
-  font-family: "Instrument Serif", Georgia, serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: 18px;
-  font-style: italic;
   line-height: 1.35;
 }
 
@@ -988,7 +1023,7 @@ input[type="range"] { accent-color: var(--amber); }
 .search-result strong {
   margin-bottom: 5px;
   overflow: hidden;
-  font-family: "Instrument Serif", serif;
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
   font-size: clamp(23px, 3vw, 32px);
   font-weight: 400;
   letter-spacing: -0.02em;
@@ -1053,7 +1088,8 @@ input[type="range"] { accent-color: var(--amber); }
   .topbar { min-height: 70px; padding: max(19px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 18px max(20px, env(safe-area-inset-left)); }
   .version-tag,
   .account-label { display: none; }
-  .session-controls { gap: 16px; }
+  .session-controls { gap: 12px; }
+  .forecast-picker span { display: none; }
   .auth-copy { width: calc(100% - 40px); margin: 110px 20px 54px; }
   .auth-copy h1 { font-size: clamp(58px, 20vw, 84px); }
   .atmosphere { opacity: 0.52; transform: translateX(28%); }
@@ -1079,6 +1115,7 @@ input[type="range"] { accent-color: var(--amber); }
 }
 
 @media (max-width: 480px) {
+  .forecast-picker button { padding-inline: 5px; }
   .now-playing { grid-template-columns: 1fr; margin-top: 34px; gap: 10px; }
   .artwork-frame { width: min(68vw, 250px); }
   .track-copy { margin-left: 0; padding-top: 7px; }
@@ -1086,6 +1123,121 @@ input[type="range"] { accent-color: var(--amber); }
   .volume-control { display: none; }
   .transport-row { display: flex; justify-content: center; }
   .runtime-notice { right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); width: calc(100% - 32px); }
+}
+
+/* The three forecasts share a material language, then change the room's light. */
+.player-shell[data-weather-primary="rain"] {
+  --weather-glow: rgb(255 49 95 / 22%);
+}
+
+.player-shell[data-weather-primary="sun"] {
+  --weather-glow: rgb(255 222 73 / 24%);
+}
+
+.player-shell[data-weather-primary="snow"] {
+  --weather-glow: rgb(205 235 255 / 18%);
+}
+
+body::before {
+  opacity: 0.16;
+  mix-blend-mode: soft-light;
+}
+
+.player-shell,
+.player-shell::before {
+  transition: background 700ms cubic-bezier(0.16, 1, 0.3, 1), filter 700ms cubic-bezier(0.16, 1, 0.3, 1), opacity 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wordmark::before {
+  box-shadow: 0 0 13px var(--weather-glow, rgb(157 85 104 / 44%));
+}
+
+.forecast-picker {
+  padding: 3px;
+  background: rgb(22 12 27 / 42%);
+  box-shadow: inset 0 1px 0 rgb(255 249 239 / 8%), 0 8px 26px rgb(4 1 5 / 12%);
+}
+
+.forecast-picker button {
+  min-height: 28px;
+  padding: 5px 8px;
+  transition: color 180ms ease, background-color 280ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 280ms cubic-bezier(0.16, 1, 0.3, 1), transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.text-button,
+.close-button {
+  transition: color 180ms ease, opacity 180ms ease, transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.artwork-frame {
+  box-shadow: inset 0 1px 0 rgb(255 249 239 / 29%), inset 0 0 0 9px rgb(242 229 212 / 3%), -18px 22px 0 color-mix(in srgb, var(--weather-secondary, var(--wine)) 48%, transparent), 0 36px 100px var(--shadow), 0 0 74px var(--weather-glow, transparent);
+  transition: box-shadow 650ms cubic-bezier(0.16, 1, 0.3, 1), transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.artwork-orb-control > span {
+  transition: color 180ms ease, transform 220ms cubic-bezier(0.23, 1, 0.32, 1), opacity 180ms ease;
+}
+
+.youtube-player-host {
+  box-shadow: inset 0 1px 0 rgb(255 249 239 / 32%), inset 0 0 0 8px rgb(242 229 212 / 3%), 21px 22px 0 color-mix(in srgb, var(--weather-secondary, var(--wine)) 34%, transparent), 0 35px 96px var(--shadow), 0 0 60px var(--weather-glow, transparent);
+  transition: box-shadow 650ms cubic-bezier(0.16, 1, 0.3, 1), transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.track-copy h1 {
+  font-weight: 600;
+  letter-spacing: -0.073em;
+}
+
+.transport-button {
+  transition: transform 150ms cubic-bezier(0.23, 1, 0.32, 1), border-color 180ms ease, background-color 220ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 150ms ease;
+}
+
+.visual-budget {
+  transition: border-color 420ms cubic-bezier(0.16, 1, 0.3, 1), background-color 420ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.visual-budget__tiers button {
+  transition: color 160ms ease, background-color 220ms cubic-bezier(0.16, 1, 0.3, 1), border-color 220ms cubic-bezier(0.16, 1, 0.3, 1), transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .forecast-picker button:hover:not([aria-pressed="true"]) {
+    color: var(--bone);
+    background: rgb(242 229 212 / 10%);
+    transform: translateY(-1px) rotate(-1deg);
+  }
+
+  .forecast-picker button[aria-pressed="true"]:hover {
+    transform: translateY(-1px) rotate(1deg) scale(1.04);
+  }
+
+  .text-button:hover,
+  .close-button:hover,
+  .search-form button:hover {
+    transform: translateY(-1px);
+  }
+
+  .visual-budget__tiers button:hover:not([aria-pressed="true"]) {
+    border-color: var(--weather-accent, var(--bone));
+    color: var(--bone);
+    transform: translateY(-1px);
+  }
+}
+
+@media (max-width: 740px) {
+  .visual-budget {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    width: calc(100% - 40px);
+    margin: 0 auto max(30px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 480px) {
+  .forecast-picker { gap: 0; }
+  .forecast-picker button { min-height: 30px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

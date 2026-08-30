@@ -158,9 +158,12 @@ function createTitleTexture(
   context.textBaseline = "middle";
   context.shadowColor = "rgba(21, 8, 17, 0.45)";
   context.shadowBlur = 18;
-  context.font = '148px "Instrument Serif", Georgia, serif';
+  // The orb reads as a hand-made track label. It uses the utility face while
+  // the page title stays expressive, so both feel from the same room without
+  // becoming a duplicate lockup.
+  context.font = '700 92px "Space Mono", ui-monospace, monospace';
   context.fillText(first, 500, 410);
-  context.font = '162px "Instrument Serif", Georgia, serif';
+  context.font = '700 106px "Space Mono", ui-monospace, monospace';
   context.fillText(second, 544, 590);
   context.shadowBlur = 0;
 

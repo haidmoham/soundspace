@@ -17,7 +17,11 @@ import {
   useYouTubePlayer,
 } from "./useYouTubePlayer";
 import { AMBIENT_VISUAL_STATE } from "./atmosphere/ambient";
-import { createSongWeatherProgram } from "./atmosphere/weather-engine";
+import { createMusicResponseProgram } from "./atmosphere/music-response";
+import {
+  createSongWeatherProgram,
+  type WeatherKind,
+} from "./atmosphere/weather-engine";
 import {
   SoundspaceWorld,
   type PerformanceSample,
@@ -96,6 +100,8 @@ function formatTime(milliseconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+const displayCopy = (value: string) => value.toLocaleLowerCase();
+
 function IconButton({
   children,
   disabled,
@@ -143,7 +149,7 @@ function TrackArtwork({
 
   return (
     <button
-      aria-label={active ? "soundspace entered" : `enter ${track?.title ?? "soundspace"}`}
+      aria-label={active ? "soundspace entered" : `enter ${displayCopy(track?.title ?? "soundspace")}`}
       aria-disabled={active}
       className="artwork-orb-control"
       data-active={active}
@@ -187,6 +193,7 @@ export default function App() {
   const [seekDraft, setSeekDraft] = useState<number | null>(null);
   const [volume, setVolume] = useState(0.72);
   const [visualQuality, setVisualQuality] = useState<VisualQuality>("max");
+  const [weatherOverride, setWeatherOverride] = useState<WeatherKind | null>(null);
   const [performanceSample, setPerformanceSample] = useState<PerformanceSample | null>(null);
   const searchPanelRef = useRef<HTMLElement>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
@@ -198,8 +205,27 @@ export default function App() {
     ? player.playbackState.positionMs / player.playbackState.durationMs
     : 0;
   const weatherProgram = useMemo(
-    () => createSongWeatherProgram(visibleTrack ?? DEFAULT_TRACK),
-    [visibleTrack?.album, visibleTrack?.artists, visibleTrack?.id, visibleTrack?.title],
+    () => createSongWeatherProgram(visibleTrack ?? DEFAULT_TRACK, weatherOverride ?? undefined),
+    [
+      visibleTrack?.album,
+      visibleTrack?.artists,
+      visibleTrack?.id,
+      visibleTrack?.title,
+      weatherOverride,
+    ],
+  );
+  const musicResponseProgram = useMemo(
+    () => createMusicResponseProgram(visibleTrack ?? DEFAULT_TRACK, weatherProgram),
+    [visibleTrack, weatherProgram],
+  );
+  const musicResponse = useMemo(
+    () => musicResponseProgram.sample({ playback: player.playbackState }),
+    [
+      musicResponseProgram,
+      player.playbackState.durationMs,
+      player.playbackState.isPlaying,
+      player.playbackState.positionMs,
+    ],
   );
   const liveWeatherStructure = useMemo(
     () => weatherProgram.live(playbackProgress),
@@ -214,7 +240,7 @@ export default function App() {
   const worldVisualState = entered
       ? blendVisualStates(
         weatherProgram.pregame.visualState,
-        liveWeatherStructure.visualState,
+        musicResponse.visualState,
         entryBlend,
       )
     : AMBIENT_VISUAL_STATE;
@@ -234,6 +260,7 @@ export default function App() {
     setNotice(null);
     try {
       const result = await resolveTrack(nextArtist.trim(), nextTitle.trim());
+      setWeatherOverride(null);
       setSelectedTrack(result.track);
       if (shouldPlay) {
         await player.selectTrack(result.track);
@@ -348,6 +375,7 @@ export default function App() {
         setPendingAutoplayTrackId(track.id);
       }
       setSelectedTrack(track);
+      setWeatherOverride(null);
       if (playerReady) {
         await player.provider.play();
       }
@@ -420,6 +448,10 @@ export default function App() {
       className="player-shell"
       data-entry-progress={entryTransition.toFixed(3)}
       data-entered={entered}
+      data-music-energy={musicResponse.energy.toFixed(3)}
+      data-music-event={musicResponse.events.find((event) => event.active)?.kind ?? "none"}
+      data-music-pulse={musicResponse.pulse.toFixed(3)}
+      data-music-source="authored-playback-clock"
       data-playback-progress={playbackProgress.toFixed(3)}
       data-weather-primary={weatherStructure.profile.primaryPhenomenon}
       data-weather-seed={weatherStructure.profile.seed}
@@ -434,12 +466,31 @@ export default function App() {
         onPerformanceSample={setPerformanceSample}
         profile={worldProfile}
         quality={visualQuality}
+        response={musicResponse}
         visualState={worldVisualState}
       />
 
       <header className="topbar">
         <p className="wordmark">soundspace</p>
         <div className="session-controls">
+          <div aria-label="choose weather" className="forecast-picker" role="group">
+            <span>forecast</span>
+            {(["auto", "rain", "sun", "snow"] as const).map((weather) => {
+              const active = weather === "auto"
+                ? weatherOverride === null
+                : weatherOverride === weather;
+              return (
+                <button
+                  aria-pressed={active}
+                  key={weather}
+                  onClick={() => setWeatherOverride(weather === "auto" ? null : weather)}
+                  type="button"
+                >
+                  {weather}
+                </button>
+              );
+            })}
+          </div>
           <button className="text-button" onClick={() => setSearchOpen(true)} ref={searchTriggerRef} type="button">
             choose track
           </button>
@@ -458,9 +509,9 @@ export default function App() {
           />
         </div>
         <div className="track-copy">
-          <h1>{visibleTrack?.title ?? "melancholy"}</h1>
+          <h1>{displayCopy(visibleTrack?.title ?? "melancholy")}</h1>
           <p className="artist-line">
-            {visibleTrack?.artists.join(", ") ?? "driveways"}
+            {displayCopy(visibleTrack?.artists.join(", ") ?? "driveways")}
           </p>
         </div>
       </section>
@@ -608,8 +659,8 @@ export default function App() {
                     <span aria-hidden="true" className="result-placeholder" />
                   )}
                   <span>
-                    <strong>{track.title}</strong>
-                    <small>{track.artists.join(", ")}</small>
+                    <strong>{displayCopy(track.title)}</strong>
+                    <small>{displayCopy(track.artists.join(", "))}</small>
                   </span>
                   <i>{String(index + 1).padStart(2, "0")} / play</i>
                 </button>

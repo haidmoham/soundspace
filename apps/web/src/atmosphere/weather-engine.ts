@@ -321,8 +321,23 @@ function pregameState(preset: WeatherPreset): VisualState {
   });
 }
 
-export function createSongWeatherProgram(track: PlaybackTrack): SongWeatherProgram {
-  const classification = classifyTrackWeather(track);
+export function createSongWeatherProgram(
+  track: PlaybackTrack,
+  weatherOverride?: WeatherKind,
+): SongWeatherProgram {
+  const suggestedClassification = classifyTrackWeather(track);
+  const classification: WeatherClassification = weatherOverride
+    ? {
+        confidence: 1,
+        primary: weatherOverride,
+        rationale: "chosen forecast",
+        scores: {
+          rain: weatherOverride === "rain" ? 1 : 0,
+          sun: weatherOverride === "sun" ? 1 : 0,
+          snow: weatherOverride === "snow" ? 1 : 0,
+        },
+      }
+    : suggestedClassification;
   const identity = `${track.id}:${track.title}:${track.artists.join(":")}`;
   const seed = 1_000 + hashText(identity) % 999_000;
   const preset = PRESETS[classification.primary];
