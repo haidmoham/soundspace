@@ -6,4 +6,10 @@ dist/
 .env.*
 !.env.example
 .vite/
+.vercel/
+.railway/
+.codex-tmp/
 apps/api/.data/
+e2e/fixtures/song-corpus.local.json
+playwright-report/
+test-results/
