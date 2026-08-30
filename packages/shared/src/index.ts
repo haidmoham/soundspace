@@ -6,6 +6,12 @@ export type PlaybackTrack = {
   album: string;
   artworkUrl?: string;
 };
+
+export type YouTubeResolvedTrack = PlaybackTrack & {
+  provider: "youtube";
+  youtubeVideoId: string;
+};
+
 export type PlaybackState = {
   trackId: string | null;
   track: PlaybackTrack | null;
@@ -22,17 +28,6 @@ export type PlaybackProvider = {
   previous(): Promise<void>;
   next(): Promise<void>;
   setVolume(volume: number): Promise<void>;
-};
-
-export type SpotifyTrackSummary = PlaybackTrack;
-
-export type AuthStatus = {
-  authenticated: boolean;
-  configured: boolean;
-  profile: {
-    displayName: string;
-    product: string;
-  } | null;
 };
 
 export const EMPTY_PLAYBACK_STATE: PlaybackState = {

@@ -1,473 +1,359 @@
-import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
-import type { AuthStatus, SpotifyTrackSummary } from "@soundspace/shared";
+import type { YouTubeResolvedTrack } from "@soundspace/shared";
+import Database from "better-sqlite3";
 import dotenv from "dotenv";
-import Fastify, {
-  type FastifyReply,
-  type FastifyRequest,
-} from "fastify";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import Fastify from "fastify";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
+
+import { applyInitialMigration } from "./db/migrations/0000_initial.js";
+import { youtubeTrackCache } from "./db/schema.js";
 
 dotenv.config({ path: fileURLToPath(new URL("../.env", import.meta.url)) });
 
-const SESSION_COOKIE = "soundspace_session";
-const SPOTIFY_ACCOUNTS_URL = "https://accounts.spotify.com";
-const SPOTIFY_API_URL = "https://api.spotify.com/v1";
-const TOKEN_EXPIRY_MARGIN_MS = 60_000;
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
-const REQUIRED_SCOPES = [
-  "streaming",
-  "user-read-email",
-  "user-read-private",
-  "user-read-playback-state",
-  "user-modify-playback-state",
-];
-
-type SpotifyTokens = {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-  scope: string;
-};
-
-type Session = {
-  id: string;
-  createdAt: number;
-  lastSeenAt: number;
-  oauthState?: string;
-  oauthStateCreatedAt?: number;
-  tokens?: SpotifyTokens;
-};
-
-type SpotifyTokenResponse = {
-  access_token: string;
-  token_type: string;
-  scope: string;
-  expires_in: number;
-  refresh_token?: string;
-};
-
-type SpotifyProfileResponse = {
-  display_name?: string | null;
-  id: string;
-  product?: string;
-};
-
-type SpotifySearchResponse = {
-  tracks?: {
-    items: Array<{
-      id: string;
-      uri: string;
-      name: string;
-      artists: Array<{ name: string }>;
-      album: {
-        name: string;
-        images: Array<{ url: string; width: number; height: number }>;
-      };
-    }>;
-  };
-};
+const LOCAL_DATABASE_PATH = fileURLToPath(
+  new URL("../.data/soundspace.sqlite", import.meta.url),
+);
 
 const env = {
-  clientId: process.env.SPOTIFY_CLIENT_ID?.trim() ?? "",
-  clientSecret: process.env.SPOTIFY_CLIENT_SECRET?.trim() ?? "",
-  redirectUri:
-    process.env.SPOTIFY_REDIRECT_URI?.trim() ??
-    "http://127.0.0.1:5173/api/auth/callback",
+  youtubeApiKey: process.env.YOUTUBE_API_KEY?.trim() ?? "",
+  databasePath: process.env.SOUNDSPACE_DATABASE_PATH?.trim() || LOCAL_DATABASE_PATH,
   webOrigin: process.env.WEB_ORIGIN?.trim() ?? "http://127.0.0.1:5173",
   host: process.env.API_HOST?.trim() ?? "127.0.0.1",
   port: Number.parseInt(process.env.API_PORT ?? "8787", 10),
-  cookieSecret:
-    process.env.COOKIE_SECRET?.trim() ??
-    "soundspace-local-only-cookie-secret-change-me",
   isProduction: process.env.NODE_ENV === "production",
 };
 
-const isSpotifyConfigured = Boolean(env.clientId && env.clientSecret);
-const sessions = new Map<string, Session>();
-const app = Fastify({ logger: true });
+type YouTubeCandidate = {
+  youtubeVideoId: string;
+  title: string;
+  channelTitle: string;
+  artworkUrl?: string;
+};
 
-await app.register(cookie, { secret: env.cookieSecret });
-await app.register(cors, {
-  origin: env.webOrigin,
-  credentials: true,
+type ResolverSource = "cache" | "youtube";
+
+class YouTubeNotConfiguredError extends Error {
+  constructor() {
+    super("youtube data api is not configured.");
+  }
+}
+
+const YouTubeThumbnailSchema = z.object({ url: z.string().url() });
+const YouTubeThumbnailSetSchema = z.object({
+  maxres: YouTubeThumbnailSchema.optional(),
+  standard: YouTubeThumbnailSchema.optional(),
+  high: YouTubeThumbnailSchema.optional(),
+  medium: YouTubeThumbnailSchema.optional(),
+  default: YouTubeThumbnailSchema.optional(),
+});
+const YouTubeSearchResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.object({ videoId: z.string().min(1) }),
+      snippet: z.object({
+        title: z.string().min(1),
+        channelTitle: z.string().min(1).optional(),
+        thumbnails: YouTubeThumbnailSetSchema.optional(),
+      }),
+    }),
+  ),
+});
+const YouTubeVideoResponseSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().min(1),
+      status: z.object({ embeddable: z.boolean().optional() }),
+    }),
+  ),
 });
 
-function newOpaqueValue(): string {
-  return randomBytes(32).toString("base64url");
+type YouTubeThumbnailSet = z.infer<typeof YouTubeThumbnailSetSchema>;
+
+function preferredArtworkUrl(
+  thumbnails: YouTubeThumbnailSet | undefined,
+): string | undefined {
+  if (!thumbnails) return undefined;
+
+  for (const thumbnail of [
+    thumbnails.maxres,
+    thumbnails.standard,
+    thumbnails.high,
+    thumbnails.medium,
+    thumbnails.default,
+  ]) {
+    if (thumbnail) return thumbnail.url;
+  }
+
+  return undefined;
 }
 
-function safeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
+async function readSearchCandidates(response: Response): Promise<YouTubeCandidate[]> {
+  const parsed = YouTubeSearchResponseSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new Error("youtube search returned an unexpected response shape.");
+  }
 
-  return (
-    leftBuffer.length === rightBuffer.length &&
-    timingSafeEqual(leftBuffer, rightBuffer)
+  return parsed.data.items.map((item) => ({
+    youtubeVideoId: item.id.videoId,
+    title: item.snippet.title,
+    channelTitle: item.snippet.channelTitle ?? "YouTube",
+    artworkUrl: preferredArtworkUrl(item.snippet.thumbnails),
+  }));
+}
+
+async function readEmbeddableVideoIds(response: Response): Promise<Set<string>> {
+  const parsed = YouTubeVideoResponseSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new Error("youtube video lookup returned an unexpected response shape.");
+  }
+
+  return new Set(
+    parsed.data.items
+      .filter((item) => item.status.embeddable)
+      .map((item) => item.id),
   );
 }
 
-function readSession(request: FastifyRequest): Session | undefined {
-  const rawCookie = request.cookies[SESSION_COOKIE];
-  if (!rawCookie) return undefined;
-
-  const unsigned = request.unsignCookie(rawCookie);
-  if (!unsigned.valid) return undefined;
-
-  const session = sessions.get(unsigned.value);
-  if (session) session.lastSeenAt = Date.now();
-  return session;
+function normalizeQueryPart(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
-function createSession(reply: FastifyReply): Session {
-  const session: Session = {
-    id: randomUUID(),
-    createdAt: Date.now(),
-    lastSeenAt: Date.now(),
+function createCacheKey(artist: string, title: string): string {
+  return `${normalizeQueryPart(artist)}\u001f${normalizeQueryPart(title)}`;
+}
+
+function scoreCandidate(
+  candidate: YouTubeCandidate,
+  artist: string,
+  title: string,
+): number {
+  const normalizedArtist = normalizeQueryPart(artist);
+  const normalizedTitle = normalizeQueryPart(title);
+  const normalizedVideoTitle = normalizeQueryPart(candidate.title);
+  const normalizedChannel = normalizeQueryPart(candidate.channelTitle);
+  const searchableText = `${normalizedVideoTitle} ${normalizedChannel}`;
+  let score = 0;
+
+  if (normalizedVideoTitle.includes(normalizedTitle)) score += 24;
+  if (normalizedVideoTitle.includes(normalizedArtist)) score += 20;
+  if (normalizedChannel.includes(normalizedArtist)) score += 18;
+  if (normalizedVideoTitle.includes("official audio")) score += 48;
+  if (normalizedVideoTitle.includes("official")) score += 16;
+  if (normalizedVideoTitle.includes("audio")) score += 12;
+  if (normalizedChannel.includes("topic")) score += 16;
+
+  for (const signal of ["cover", "reaction", "live", "slowed", "nightcore"]) {
+    if (searchableText.includes(signal)) score -= 80;
+  }
+  for (const signal of ["remix", "sped up", "lyrics", "lyric video"]) {
+    if (searchableText.includes(signal)) score -= 20;
+  }
+
+  return score;
+}
+
+function rankCandidates(
+  candidates: YouTubeCandidate[],
+  artist: string,
+  title: string,
+): YouTubeCandidate[] {
+  return candidates
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: scoreCandidate(candidate, artist, title),
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.candidate);
+}
+
+function toResolvedTrack(
+  artist: string,
+  cached: {
+    youtubeVideoId: string;
+    displayTitle: string;
+    channelTitle: string;
+    artworkUrl: string | null;
+  },
+): YouTubeResolvedTrack {
+  return {
+    id: cached.youtubeVideoId,
+    uri: cached.youtubeVideoId,
+    youtubeVideoId: cached.youtubeVideoId,
+    provider: "youtube",
+    title: cached.displayTitle,
+    artists: [artist],
+    album: cached.channelTitle,
+    artworkUrl: cached.artworkUrl ?? undefined,
   };
-
-  sessions.set(session.id, session);
-  reply.setCookie(SESSION_COOKIE, session.id, {
-    httpOnly: true,
-    maxAge: SESSION_MAX_AGE_SECONDS,
-    path: "/",
-    sameSite: "lax",
-    secure: env.isProduction,
-    signed: true,
-  });
-
-  return session;
 }
 
-function requireSession(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Session | undefined {
-  const session = readSession(request);
-  if (!session?.tokens) {
-    void reply.code(401).send({ error: "spotify_auth_required" });
-    return undefined;
-  }
+mkdirSync(dirname(env.databasePath), { recursive: true });
+const sqlite = new Database(env.databasePath);
+sqlite.pragma("journal_mode = WAL");
+const database = drizzle(sqlite);
+applyInitialMigration(database);
 
-  return session;
-}
+const app = Fastify({ logger: true });
 
-function requireSpotifyConfig(reply: FastifyReply): boolean {
-  if (isSpotifyConfigured) return true;
+await app.register(cors, {
+  origin: env.webOrigin,
+});
 
-  void reply.code(503).send({
-    error: "spotify_not_configured",
-    message: "Add Spotify credentials to apps/api/.env and restart the API.",
-  });
-  return false;
-}
+async function findYouTubeCandidates(
+  artist: string,
+  title: string,
+): Promise<YouTubeCandidate[]> {
+  const query = `${artist} ${title} official audio`;
+  const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
+  searchUrl.search = new URLSearchParams({
+    key: env.youtubeApiKey,
+    part: "snippet",
+    q: query,
+    type: "video",
+    maxResults: "10",
+    videoEmbeddable: "true",
+    videoSyndicated: "true",
+  }).toString();
 
-async function tokenRequest(
-  body: URLSearchParams,
-): Promise<SpotifyTokenResponse> {
-  const basicCredentials = Buffer.from(
-    `${env.clientId}:${env.clientSecret}`,
-  ).toString("base64");
-  const response = await fetch(`${SPOTIFY_ACCOUNTS_URL}/api/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${basicCredentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-  });
-
+  const response = await fetch(searchUrl);
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Spotify token exchange failed (${response.status}): ${detail}`);
+    throw new Error(`youtube search failed with status ${response.status}.`);
   }
 
-  return (await response.json()) as SpotifyTokenResponse;
+  const candidates = await readSearchCandidates(response);
+  if (candidates.length === 0) return [];
+
+  const detailsUrl = new URL("https://www.googleapis.com/youtube/v3/videos");
+  detailsUrl.search = new URLSearchParams({
+    key: env.youtubeApiKey,
+    part: "status",
+    id: candidates.map((candidate) => candidate.youtubeVideoId).join(","),
+  }).toString();
+
+  const detailsResponse = await fetch(detailsUrl);
+  if (!detailsResponse.ok) {
+    throw new Error(
+      `youtube video lookup failed with status ${detailsResponse.status}.`,
+    );
+  }
+
+  const embeddableVideoIds = await readEmbeddableVideoIds(detailsResponse);
+  return rankCandidates(
+    candidates.filter((candidate) =>
+      embeddableVideoIds.has(candidate.youtubeVideoId),
+    ),
+    artist,
+    title,
+  );
 }
 
-function storeTokens(
-  response: SpotifyTokenResponse,
-  existingRefreshToken?: string,
-): SpotifyTokens {
-  const refreshToken = response.refresh_token ?? existingRefreshToken;
-  if (!refreshToken) throw new Error("Spotify did not return a refresh token.");
+async function resolveTrack(
+  artist: string,
+  title: string,
+): Promise<{ source: ResolverSource; track: YouTubeResolvedTrack }> {
+  const cacheKey = createCacheKey(artist, title);
+  const cached = database
+    .select()
+    .from(youtubeTrackCache)
+    .where(eq(youtubeTrackCache.cacheKey, cacheKey))
+    .get();
+
+  if (cached) {
+    return { source: "cache", track: toResolvedTrack(artist, cached) };
+  }
+
+  if (!env.youtubeApiKey) {
+    throw new YouTubeNotConfiguredError();
+  }
+
+  const candidates = await findYouTubeCandidates(artist, title);
+  const candidate = candidates[0];
+  if (!candidate) {
+    throw new Error("no embeddable, syndicated youtube result was found.");
+  }
+
+  database
+    .insert(youtubeTrackCache)
+    .values({
+      cacheKey,
+      artist: artist.trim(),
+      title: title.trim(),
+      youtubeVideoId: candidate.youtubeVideoId,
+      displayTitle: candidate.title,
+      channelTitle: candidate.channelTitle,
+      artworkUrl: candidate.artworkUrl ?? null,
+      resolvedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: youtubeTrackCache.cacheKey,
+      set: {
+        youtubeVideoId: candidate.youtubeVideoId,
+        displayTitle: candidate.title,
+        channelTitle: candidate.channelTitle,
+        artworkUrl: candidate.artworkUrl ?? null,
+        resolvedAt: new Date(),
+      },
+    })
+    .run();
 
   return {
-    accessToken: response.access_token,
-    refreshToken,
-    expiresAt: Date.now() + response.expires_in * 1_000,
-    scope: response.scope,
-  };
-}
-
-async function refreshAccessToken(
-  session: Session,
-  force = false,
-): Promise<string> {
-  const tokens = session.tokens;
-  if (!tokens) throw new Error("Spotify authentication required.");
-
-  if (!force && tokens.expiresAt - TOKEN_EXPIRY_MARGIN_MS > Date.now()) {
-    return tokens.accessToken;
-  }
-
-  const response = await tokenRequest(
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: tokens.refreshToken,
+    source: "youtube",
+    track: toResolvedTrack(artist, {
+      youtubeVideoId: candidate.youtubeVideoId,
+      displayTitle: candidate.title,
+      channelTitle: candidate.channelTitle,
+      artworkUrl: candidate.artworkUrl ?? null,
     }),
-  );
-  session.tokens = storeTokens(response, tokens.refreshToken);
-  return session.tokens.accessToken;
-}
-
-async function spotifyFetch(
-  session: Session,
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
-  const request = async (accessToken: string) =>
-    fetch(`${SPOTIFY_API_URL}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...init.headers,
-      },
-    });
-
-  let response = await request(await refreshAccessToken(session));
-  if (response.status === 401) {
-    response = await request(await refreshAccessToken(session, true));
-  }
-  return response;
-}
-
-async function spotifyError(
-  reply: FastifyReply,
-  response: Response,
-): Promise<FastifyReply> {
-  const detail = await response.text();
-  const status = response.status >= 400 && response.status < 600
-    ? response.status
-    : 502;
-
-  return reply.code(status).send({
-    error: "spotify_request_failed",
-    status: response.status,
-    detail,
-  });
+  };
 }
 
 app.get("/api/health", async () => ({
   ok: true,
-  spotifyConfigured: isSpotifyConfigured,
+  databaseReady: true,
+  youtubeConfigured: Boolean(env.youtubeApiKey),
 }));
 
-app.get("/api/auth/login", async (_request, reply) => {
-  if (!requireSpotifyConfig(reply)) return;
-
-  const session = createSession(reply);
-  session.oauthState = newOpaqueValue();
-  session.oauthStateCreatedAt = Date.now();
-
-  const authorizeUrl = new URL(`${SPOTIFY_ACCOUNTS_URL}/authorize`);
-  authorizeUrl.search = new URLSearchParams({
-    response_type: "code",
-    client_id: env.clientId,
-    scope: REQUIRED_SCOPES.join(" "),
-    redirect_uri: env.redirectUri,
-    state: session.oauthState,
-    show_dialog: "true",
-  }).toString();
-
-  return reply.redirect(authorizeUrl.toString());
-});
-
-app.get<{
-  Querystring: { code?: string; error?: string; state?: string };
-}>("/api/auth/callback", async (request, reply) => {
-  const session = readSession(request);
-  const { code, error, state } = request.query;
-
-  if (error) {
-    return reply.redirect(`${env.webOrigin}/?auth=denied`);
-  }
-
-  const stateIsFresh = session?.oauthStateCreatedAt
-    ? Date.now() - session.oauthStateCreatedAt < 10 * 60 * 1_000
-    : false;
-  const stateMatches = Boolean(
-    session?.oauthState && state && safeEqual(session.oauthState, state),
-  );
-
-  if (!session || !code || !stateIsFresh || !stateMatches) {
-    return reply.redirect(`${env.webOrigin}/?auth=invalid_state`);
-  }
-
-  try {
-    const response = await tokenRequest(
-      new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: env.redirectUri,
-      }),
-    );
-    session.tokens = storeTokens(response);
-    delete session.oauthState;
-    delete session.oauthStateCreatedAt;
-    return reply.redirect(`${env.webOrigin}/?auth=success`);
-  } catch (callbackError) {
-    request.log.error(callbackError);
-    return reply.redirect(`${env.webOrigin}/?auth=token_error`);
-  }
-});
-
-app.get("/api/auth/status", async (request): Promise<AuthStatus> => {
-  const session = readSession(request);
-  if (!session?.tokens) {
-    return {
-      authenticated: false,
-      configured: isSpotifyConfigured,
-      profile: null,
-    };
-  }
-
-  const response = await spotifyFetch(session, "/me");
-  if (!response.ok) {
-    request.log.warn({ status: response.status }, "Spotify profile request failed");
-    return {
-      authenticated: false,
-      configured: isSpotifyConfigured,
-      profile: null,
-    };
-  }
-
-  const profile = (await response.json()) as SpotifyProfileResponse;
-  return {
-    authenticated: true,
-    configured: isSpotifyConfigured,
-    profile: {
-      displayName: profile.display_name || profile.id,
-      product: profile.product ?? "unknown",
-    },
-  };
-});
-
-app.post("/api/auth/logout", async (request, reply) => {
-  const session = readSession(request);
-  if (session) sessions.delete(session.id);
-  reply.clearCookie(SESSION_COOKIE, { path: "/" });
-  return reply.code(204).send();
-});
-
-app.get("/api/spotify/token", async (request, reply) => {
-  const session = requireSession(request, reply);
-  if (!session) return;
-
-  const accessToken = await refreshAccessToken(session);
-  return {
-    accessToken,
-    expiresAt: session.tokens?.expiresAt,
-  };
-});
-
-app.get<{ Querystring: { q?: string } }>(
-  "/api/spotify/search",
+app.get<{ Querystring: { artist?: string; title?: string } }>(
+  "/api/youtube/resolve",
   async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-
-    const query = request.query.q?.trim() || 'track:"melancholy" artist:driveways';
-    const params = new URLSearchParams({
-      q: query,
-      type: "track",
-      limit: "8",
-    });
-    const response = await spotifyFetch(session, `/search?${params.toString()}`);
-    if (!response.ok) return spotifyError(reply, response);
-
-    const data = (await response.json()) as SpotifySearchResponse;
-    const tracks: SpotifyTrackSummary[] = (data.tracks?.items ?? []).map(
-      (track) => ({
-        id: track.id,
-        uri: track.uri,
-        title: track.name,
-        artists: track.artists.map((artist) => artist.name),
-        album: track.album.name,
-        artworkUrl: track.album.images[0]?.url,
-      }),
-    );
-
-    return { tracks };
-  },
-);
-
-app.post<{ Body: { deviceId?: string } }>(
-  "/api/spotify/player/transfer",
-  async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-
-    const deviceId = request.body?.deviceId?.trim();
-    if (!deviceId) {
-      return reply.code(400).send({ error: "device_id_required" });
+    const artist = request.query.artist?.trim();
+    const title = request.query.title?.trim();
+    if (!artist || !title) {
+      return reply.code(400).send({ error: "artist_and_title_required" });
     }
 
-    const response = await spotifyFetch(session, "/me/player", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_ids: [deviceId], play: false }),
-    });
-    if (!response.ok) return spotifyError(reply, response);
-    return reply.code(204).send();
-  },
-);
+    try {
+      return await resolveTrack(artist, title);
+    } catch (error) {
+      if (error instanceof YouTubeNotConfiguredError) {
+        return reply.code(503).send({
+          error: "youtube_not_configured",
+          message: "add youtube_api_key to apps/api/.env and restart the api.",
+        });
+      }
 
-app.post<{ Body: { deviceId?: string; uri?: string } }>(
-  "/api/spotify/player/play",
-  async (request, reply) => {
-    const session = requireSession(request, reply);
-    if (!session) return;
-
-    const deviceId = request.body?.deviceId?.trim();
-    const uri = request.body?.uri?.trim();
-    if (!deviceId || !uri?.startsWith("spotify:track:")) {
-      return reply.code(400).send({ error: "valid_device_and_track_required" });
+      request.log.error(error);
+      const message = error instanceof Error ? error.message : "youtube resolution failed.";
+      return reply.code(502).send({ error: "youtube_resolution_failed", message });
     }
-
-    const params = new URLSearchParams({ device_id: deviceId });
-    const response = await spotifyFetch(
-      session,
-      `/me/player/play?${params.toString()}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uris: [uri] }),
-      },
-    );
-    if (!response.ok) return spotifyError(reply, response);
-    return reply.code(204).send();
   },
 );
 
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);
   const message = env.isProduction
-    ? "Unexpected server error."
+    ? "unexpected server error."
     : error instanceof Error
       ? error.message
-      : "Unknown server error.";
+      : "unknown server error.";
   return reply.code(500).send({ error: "server_error", message });
 });
-
-const sessionCleanup = setInterval(() => {
-  const staleBefore = Date.now() - SESSION_MAX_AGE_SECONDS * 1_000;
-  for (const [id, session] of sessions) {
-    if (session.lastSeenAt < staleBefore) sessions.delete(id);
-  }
-}, 60 * 60 * 1_000);
-sessionCleanup.unref();
 
 try {
   await app.listen({ host: env.host, port: env.port });
