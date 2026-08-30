@@ -319,6 +319,9 @@ const skyFragmentShader = /* glsl */ `
   uniform float uTexture;
   uniform float uHazeAmount;
   uniform float uVibrance;
+  uniform float uEnergy;
+  uniform float uPulse;
+  uniform float uEvent;
   varying vec2 vUv;
 
   float weatherNoise(vec2 point) {
@@ -333,6 +336,10 @@ const skyFragmentShader = /* glsl */ `
     float noise = weatherNoise(vUv + vec2(uTime * uWind * 0.002, 0.0)) * 0.5 + 0.5;
     vec3 color = mix(uSky, uHorizon, horizon * 0.48);
     color = mix(color, uHaze, noise * uTexture * uHazeAmount * 0.34);
+    float distanceFromCore = length(vUv - vec2(0.5));
+    float responseWave = sin(distanceFromCore * 19.0 - uTime * (0.24 + uEnergy * 0.42)) * 0.5 + 0.5;
+    float responseLight = uEnergy * 0.045 + uPulse * responseWave * 0.085 + uEvent * 0.14;
+    color += mix(uHaze, uHorizon, responseWave) * responseLight;
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = mix(vec3(luminance), color, 1.0 + uVibrance * 0.58);
     color += uHorizon * noise * uTexture * uVibrance * 0.12;
@@ -415,6 +422,9 @@ function SkyAndLight({ profile, reducedMotion, response, visualState }: LayerPro
       uHaze: { value: new Color(profile.palette.haze) },
       uHazeAmount: { value: visualState.weather.haze },
       uHorizon: { value: new Color(profile.palette.horizon) },
+      uEnergy: { value: 0 },
+      uEvent: { value: 0 },
+      uPulse: { value: 0 },
       uSky: { value: new Color(profile.palette.sky) },
       uTexture: { value: profile.layers.skyTexture },
       uTime: { value: 0 },
@@ -432,12 +442,17 @@ function SkyAndLight({ profile, reducedMotion, response, visualState }: LayerPro
   useFrame(({ clock }) => {
     if (!material.current) return;
     material.current.uniforms.uTime!.value =
-      reducedMotion || !forces.isPlaying ? 0 : clock.elapsedTime;
+      !forces.isPlaying ? 0 : clock.elapsedTime * (reducedMotion ? 0.12 : 1);
     material.current.uniforms.uWind!.value =
       visualState.weather.wind + forces.atmosphericMotion * 0.7;
     material.current.uniforms.uHazeAmount!.value = clamp(
       visualState.weather.haze + forces.obscurity * 0.22,
     );
+    material.current.uniforms.uEnergy!.value = forces.isPlaying ? forces.energy : 0;
+    material.current.uniforms.uPulse!.value = forces.isPlaying ? forces.pulse : 0;
+    material.current.uniforms.uEvent!.value = forces.isPlaying
+      ? forces.eventStrength * (reducedMotion ? 0.2 : 1)
+      : 0;
   });
 
   return (
@@ -469,20 +484,22 @@ function CloudMass({ profile, quality, reducedMotion, response, visualState }: L
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!group.current || !forces.isPlaying || presence <= 0.01) return;
+    const motion = reducedMotion ? 0.18 : 1;
+    const time = clock.elapsedTime * motion;
     const wind = visualState.weather.wind;
     const storm = visualState.weather.stormIntensity;
-    const lurch = Math.sin(clock.elapsedTime * 2.3) * forces.viewportPressure;
+    const lurch = Math.sin(time * 2.3) * forces.viewportPressure * motion;
     group.current.rotation.z =
-      Math.sin(clock.elapsedTime * (0.34 + storm * 0.9)) * storm * 0.04 +
+      Math.sin(time * (0.34 + storm * 0.9)) * storm * 0.04 * motion +
       lurch * 0.018;
     group.current.position.x = lurch * 0.32;
     group.current.position.y =
-      Math.sin(clock.elapsedTime * (0.22 + storm * 0.48)) * storm * 0.25;
+      Math.sin(time * (0.22 + storm * 0.48)) * storm * 0.25 * motion;
     group.current.children.forEach((cloud, index) => {
       const seed = seeds[index]!;
       const travel = (
-        clock.elapsedTime *
+        time *
         seed.speed *
         (0.5 +
           wind * 1.4 +
@@ -492,7 +509,7 @@ function CloudMass({ profile, quality, reducedMotion, response, visualState }: L
       cloud.position.x = ((seed.position[0] + travel + 10) % 20) - 10;
       cloud.position.y =
         seed.position[1] +
-        Math.sin(clock.elapsedTime * seed.speed + index) *
+        Math.sin(time * seed.speed + index) *
           (0.16 +
             profile.layers.turbulence * 0.2 +
             storm * 0.14 +
@@ -535,11 +552,13 @@ function MistField({ profile, quality, reducedMotion, response, visualState }: L
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!group.current || !forces.isPlaying || presence <= 0.01) return;
+    const motion = reducedMotion ? 0.16 : 1;
+    const time = clock.elapsedTime * motion;
     group.current.children.forEach((band, index) => {
       const seed = seeds[index]!;
       const travel = (
-        clock.elapsedTime *
+        time *
         seed.speed *
         (0.6 +
           visualState.weather.wind * 1.5 +
@@ -548,10 +567,10 @@ function MistField({ profile, quality, reducedMotion, response, visualState }: L
       ) % 18;
       band.position.x = ((seed.position[0] - travel + 9) % 18) - 9;
       band.rotation.z =
-        Math.sin(clock.elapsedTime * seed.speed + index) *
+        Math.sin(time * seed.speed + index) *
         (0.035 +
           profile.layers.turbulence * 0.055 +
-          forces.viewportPressure * 0.08);
+          forces.viewportPressure * 0.08) * motion;
     });
   });
 
@@ -607,19 +626,20 @@ function RainSheet({
     (0.72 + forces.precipitationPressure * 0.42);
 
   useFrame(({ clock }, delta) => {
-    if (!lines.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!lines.current || !forces.isPlaying || presence <= 0.01) return;
+    const motion = reducedMotion ? 0.22 : 1;
     const attribute = lines.current.geometry.getAttribute("position");
     const storm = visualState.weather.stormIntensity;
     const fall =
-      delta *
+      delta * motion *
       (near ? 6.8 : 4.4) *
       (0.8 + visualState.weather.wind * 1.2 + storm * 0.7 + forces.precipitationPressure * 0.45);
     const gust =
-      Math.max(0, Math.sin(clock.elapsedTime * 4.7) - 0.18) *
+      Math.max(0, Math.sin(clock.elapsedTime * motion * 4.7) - 0.18) *
       (visualState.weather.wind + forces.gust + forces.viewportPressure) *
       (storm + forces.atmosphericMotion);
     const drift =
-      delta *
+      delta * motion *
       (visualState.weather.wind + gust + forces.atmosphericMotion * 0.7) *
       (near ? 4.6 : 2.5);
     for (let index = 0; index < count; index += 1) {
@@ -686,10 +706,10 @@ function WindShear({ profile, quality, reducedMotion, response, visualState }: L
   const presence = rainMembership * forces.viewportPressure;
 
   useFrame((_, delta) => {
-    if (!lines.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!lines.current || !forces.isPlaying || presence <= 0.01) return;
     const positions = lines.current.geometry.getAttribute("position");
     const travel =
-      delta *
+      delta * (reducedMotion ? 0.16 : 1) *
       (4.5 + visualState.weather.wind * 8 + forces.atmosphericMotion * 7);
     for (let index = 0; index < data.count; index += 1) {
       const start = index * 2;
@@ -747,14 +767,16 @@ function SnowField({ profile, quality, reducedMotion, response, visualState }: L
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }, delta) => {
-    if (!points.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!points.current || !forces.isPlaying || presence <= 0.01) return;
+    const motion = reducedMotion ? 0.28 : 1;
+    const time = clock.elapsedTime * motion;
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < data.count; index += 1) {
       const phase = data.phases[index]!;
       const weight = data.sizes[index]!;
-      let y = positions.getY(index) - delta * (0.16 + weight * 0.32);
+      let y = positions.getY(index) - delta * motion * (0.16 + weight * 0.32);
       let x = positions.getX(index) +
-        Math.sin(clock.elapsedTime * (0.24 + weight * 0.08) + phase) * delta *
+        Math.sin(time * (0.24 + weight * 0.08) + phase) * delta * motion *
           (0.12 + visualState.weather.wind * 0.24 + forces.gust * 0.16);
       if (y < -6.2) y = 6.2;
       if (x > 9.2) x = -9.2;
@@ -800,18 +822,20 @@ function SolarField({ profile, quality, reducedMotion, response, visualState }: 
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }, delta) => {
-    if (group.current && !reducedMotion && forces.isPlaying) {
-      group.current.rotation.z = clock.elapsedTime * (0.035 + forces.energy * 0.04);
-      const pulse = 1 + Math.sin(clock.elapsedTime * 2.6) * (0.045 + forces.pulse * 0.08) * presence;
+    const motion = reducedMotion ? 0.18 : 1;
+    const time = clock.elapsedTime * motion;
+    if (group.current && forces.isPlaying) {
+      group.current.rotation.z = time * (0.035 + forces.energy * 0.04);
+      const pulse = 1 + Math.sin(time * 2.6) * (0.045 + forces.pulse * 0.08) * presence * motion;
       group.current.scale.setScalar(pulse);
     }
-    if (!points.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!points.current || !forces.isPlaying || presence <= 0.01) return;
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < data.phases.length; index += 1) {
       const offset = index * 3;
       const phase = data.phases[index]!;
-      const burst = 1 + Math.sin(clock.elapsedTime * 1.8 + phase * 3) * 0.12;
-      positions.setX(index, 3 + (data.origins[offset]! - 3) * burst + delta * 0.02);
+      const burst = 1 + Math.sin(time * 1.8 + phase * 3) * 0.12 * motion;
+      positions.setX(index, 3 + (data.origins[offset]! - 3) * burst + delta * motion * 0.02);
       positions.setY(index, 1.1 + (data.origins[offset + 1]! - 1.1) * burst);
     }
     positions.needsUpdate = true;
@@ -884,10 +908,12 @@ function SunRays({ profile, reducedMotion, response, visualState }: LayerProps) 
   const presence = membership * sunlight;
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || !forces.isPlaying) return;
-    const beat = Math.max(0, Math.sin(clock.elapsedTime * (2.8 + energy * 3.8)));
-    group.current.rotation.z = clock.elapsedTime * (0.018 + energy * 0.045);
-    group.current.scale.setScalar(1 + beat * (0.06 + energy * 0.12) * presence);
+    if (!group.current || !forces.isPlaying) return;
+    const motion = reducedMotion ? 0.15 : 1;
+    const time = clock.elapsedTime * motion;
+    const beat = Math.max(0, Math.sin(time * (2.8 + energy * 3.8)));
+    group.current.rotation.z = time * (0.018 + energy * 0.045);
+    group.current.scale.setScalar(1 + beat * (0.06 + energy * 0.12) * presence * motion);
   });
 
   return (
@@ -930,17 +956,19 @@ function ParallaxAtmosphere({ profile, reducedMotion, response, visualState }: L
   );
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || !forces.isPlaying) return;
+    if (!group.current || !forces.isPlaying) return;
+    const motion = reducedMotion ? 0.14 : 1;
+    const time = clock.elapsedTime * motion;
     group.current.children.forEach((band, index) => {
       const seed = bands[index]!;
       band.position.x =
         seed.position[0] +
-        Math.sin(clock.elapsedTime * (0.08 + seed.drift * 0.2) + index) *
-          (0.14 + forces.gust * seed.drift * 0.75);
+        Math.sin(time * (0.08 + seed.drift * 0.2) + index) *
+          (0.14 + forces.gust * seed.drift * 0.75) * motion;
       band.position.y =
         seed.position[1] +
-        Math.cos(clock.elapsedTime * (0.11 + seed.drift * 0.12) + index) *
-          forces.energy * seed.drift * 0.12;
+        Math.cos(time * (0.11 + seed.drift * 0.12) + index) *
+          forces.energy * seed.drift * 0.12 * motion;
     });
   });
 
@@ -996,13 +1024,15 @@ function ForegroundOcclusion({
   );
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || !forces.isPlaying) return;
-    const tumble = rain * (0.12 + forces.viewportPressure * 0.28);
+    if (!group.current || !forces.isPlaying) return;
+    const motion = reducedMotion ? 0.12 : 1;
+    const time = clock.elapsedTime * motion;
+    const tumble = rain * (0.12 + forces.viewportPressure * 0.28) * motion;
     group.current.position.x =
-      Math.sin(clock.elapsedTime * (0.38 + forces.atmosphericMotion * 1.8)) * tumble;
+      Math.sin(time * (0.38 + forces.atmosphericMotion * 1.8)) * tumble;
     group.current.position.y =
-      Math.cos(clock.elapsedTime * 0.21) * snow * 0.035 - tumble * 0.12;
-    group.current.rotation.z = Math.sin(clock.elapsedTime * 0.52) * tumble * 0.05;
+      Math.cos(time * 0.21) * snow * 0.035 * motion - tumble * 0.12;
+    group.current.rotation.z = Math.sin(time * 0.52) * tumble * 0.05;
   });
 
   return (
@@ -1089,7 +1119,9 @@ function AirborneMatter({ profile, quality, reducedMotion, response, visualState
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!points.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
+    if (!points.current || !forces.isPlaying || presence <= 0.01) return;
+    const motion = reducedMotion ? 0.18 : 1;
+    const time = clock.elapsedTime * motion;
     const positions = points.current.geometry.getAttribute("position");
     const storm = visualState.weather.stormIntensity;
     const speed =
@@ -1103,14 +1135,14 @@ function AirborneMatter({ profile, quality, reducedMotion, response, visualState
       positions.setX(
         index,
         data.origins[offset]! +
-          Math.sin(clock.elapsedTime * speed + phase) *
-            (0.5 + storm * 0.7 + forces.particleAgitation * 0.9),
+          Math.sin(time * speed + phase) *
+            (0.5 + storm * 0.7 + forces.particleAgitation * 0.9) * motion,
       );
       positions.setY(
         index,
         data.origins[offset + 1]! +
-          Math.cos(clock.elapsedTime * speed * 0.7 + phase) *
-            (0.25 + storm * 0.38 + forces.particleAgitation * 0.52),
+          Math.cos(time * speed * 0.7 + phase) *
+            (0.25 + storm * 0.38 + forces.particleAgitation * 0.52) * motion,
       );
     }
     positions.needsUpdate = true;
@@ -1327,7 +1359,7 @@ function WeatherExpansion({
     group.current.rotation.z = amount * (0.2 + entryPressure * 0.28);
     material.current.uniforms.uIntensity!.value = entryPressure;
     material.current.uniforms.uProgress!.value = amount;
-    material.current.uniforms.uTime!.value = reducedMotion ? 0 : clock.elapsedTime;
+    material.current.uniforms.uTime!.value = clock.elapsedTime * (reducedMotion ? 0.12 : 1);
   });
 
   return (

@@ -40,18 +40,6 @@ const DEFAULT_TRACK: PlaybackTrack = {
   album: "melancholy",
 };
 
-type ResolveSource = "cache" | "youtube";
-
-type ResolveResponse = {
-  source: ResolveSource;
-  track: YouTubeResolvedTrack;
-};
-
-type ResolvePayload = {
-  source: ResolveSource | string;
-  track: YouTubeResolvedTrack;
-};
-
 type SearchPayload = {
   tracks?: YouTubeResolvedTrack[];
 };
@@ -59,25 +47,6 @@ type SearchPayload = {
 type ApiErrorPayload = {
   message?: string;
 };
-
-function decodeResolveResponse(response: ResolvePayload): ResolveResponse {
-  if (response.source !== "cache" && response.source !== "youtube") {
-    throw new Error("unknown youtube source");
-  }
-  return { source: response.source, track: response.track };
-}
-
-async function resolveTrack(artist: string, title: string): Promise<ResolveResponse> {
-  const params = new URLSearchParams({ artist, title });
-  const response = await fetch(`${API_BASE}/youtube/resolve?${params}`, {
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!response.ok) {
-    const payload: ApiErrorPayload = await response.json().catch(() => ({}));
-    throw new Error(payload.message || `track unavailable (${response.status})`);
-  }
-  return decodeResolveResponse(await response.json());
-}
 
 async function searchYouTube(query: string): Promise<YouTubeResolvedTrack[]> {
   const params = new URLSearchParams({ q: query });
@@ -173,10 +142,86 @@ function TrackArtwork({
   );
 }
 
-export default function App() {
-  const [searchQuery, setSearchQuery] = useState(
-    `${DEFAULT_ARTIST} ${DEFAULT_TITLE}`,
+function TrackSearch({
+  landing = false,
+  onChoose,
+  onClose,
+  onQueryChange,
+  onSubmit,
+  query,
+  resolving,
+  results,
+  searching,
+}: {
+  landing?: boolean;
+  onChoose(track: YouTubeResolvedTrack): void;
+  onClose?: () => void;
+  onQueryChange(value: string): void;
+  onSubmit(event: FormEvent<HTMLFormElement>): void;
+  query: string;
+  resolving: boolean;
+  results: YouTubeResolvedTrack[];
+  searching: boolean;
+}) {
+  return (
+    <div className={landing ? "search-sheet search-sheet--landing" : "search-sheet"}>
+      <div className="search-header">
+        <div>
+          <p>{landing ? "music becomes weather" : "another forecast / youtube"}</p>
+          <h2>{landing ? <>enter a<br /><i>sound</i></> : <>find a<br /><i>sound</i></>}</h2>
+        </div>
+        {onClose ? (
+          <button aria-label="close track search" className="close-button" onClick={onClose} type="button">×</button>
+        ) : null}
+      </div>
+      <form aria-busy={searching} className="search-form" onSubmit={onSubmit}>
+        <label>
+          <span>artist, title, or whatever you remember</span>
+          <input
+            aria-label="search youtube"
+            autoFocus
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="baby ara velvet"
+            value={query}
+          />
+        </label>
+        <button disabled={searching || resolving} type="submit">
+          {searching ? "listening…" : "search ↗"}
+        </button>
+      </form>
+
+      <div aria-live="polite" className="search-results">
+        {searching ? <p className="search-state">pulling sound through the weather…</p> : null}
+        {!searching && results.length === 0 ? (
+          <p className="search-state">choose a song. we will suggest its weather before you enter.</p>
+        ) : null}
+        {results.map((track, index) => (
+          <button
+            className="search-result"
+            disabled={resolving}
+            key={track.id}
+            onClick={() => onChoose(track)}
+            type="button"
+          >
+            {track.artworkUrl ? (
+              <img alt="" src={track.artworkUrl} />
+            ) : (
+              <span aria-hidden="true" className="result-placeholder" />
+            )}
+            <span>
+              <strong>{displayCopy(track.title)}</strong>
+              <small>{displayCopy(track.artists.join(", "))}</small>
+            </span>
+            <i>{String(index + 1).padStart(2, "0")} / open</i>
+          </button>
+        ))}
+      </div>
+    </div>
   );
+}
+
+export default function App() {
+  const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<YouTubeResolvedTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<YouTubeResolvedTrack | null>(
     null,
@@ -198,6 +243,7 @@ export default function App() {
   const searchPanelRef = useRef<HTMLElement>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const player = useYouTubePlayer();
+  const landing = selectedTrack === null;
   const visibleTrack = player.playbackState.track ?? selectedTrack;
   const playerReady = player.phase === "ready";
   const sliderPosition = seekDraft ?? player.playbackState.positionMs;
@@ -245,38 +291,6 @@ export default function App() {
       )
     : AMBIENT_VISUAL_STATE;
   const worldProfile = weatherProgram.pregame.profile;
-
-  const chooseTrack = async (
-    nextArtist: string,
-    nextTitle: string,
-    shouldPlay: boolean,
-  ) => {
-    if (!nextArtist.trim() || !nextTitle.trim()) {
-      setNotice("add artist and title");
-      return;
-    }
-
-    setResolving(true);
-    setNotice(null);
-    try {
-      const result = await resolveTrack(nextArtist.trim(), nextTitle.trim());
-      setWeatherOverride(null);
-      setSelectedTrack(result.track);
-      if (shouldPlay) {
-        await player.selectTrack(result.track);
-        await player.provider.play();
-      }
-      setSearchOpen(false);
-    } catch (cause: unknown) {
-      setNotice(cause instanceof Error ? cause.message : "track unavailable");
-    } finally {
-      setResolving(false);
-    }
-  };
-
-  useEffect(() => {
-    void chooseTrack(DEFAULT_ARTIST, DEFAULT_TITLE, false);
-  }, []);
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -376,9 +390,6 @@ export default function App() {
       }
       setSelectedTrack(track);
       setWeatherOverride(null);
-      if (playerReady) {
-        await player.provider.play();
-      }
       setSearchOpen(false);
     } catch (cause: unknown) {
       setNotice(cause instanceof Error ? cause.message : "track unavailable");
@@ -428,9 +439,8 @@ export default function App() {
     }
   };
 
-  const commitSeek = () => {
-    if (seekDraft === null) return;
-    void player.provider.seek(seekDraft).catch((cause: Error) => {
+  const commitSeek = (positionMs: number) => {
+    void player.provider.seek(positionMs).catch((cause: Error) => {
       setNotice(cause.message);
     });
     setSeekDraft(null);
@@ -448,6 +458,7 @@ export default function App() {
       className="player-shell"
       data-entry-progress={entryTransition.toFixed(3)}
       data-entered={entered}
+      data-landing={landing}
       data-music-energy={musicResponse.energy.toFixed(3)}
       data-music-event={musicResponse.events.find((event) => event.active)?.kind ?? "none"}
       data-music-pulse={musicResponse.pulse.toFixed(3)}
@@ -472,7 +483,7 @@ export default function App() {
 
       <header className="topbar">
         <p className="wordmark">soundspace</p>
-        <div className="session-controls">
+        {!landing ? <div className="session-controls">
           <div aria-label="choose weather" className="forecast-picker" role="group">
             <span>forecast</span>
             {(["auto", "rain", "sun", "snow"] as const).map((weather) => {
@@ -494,9 +505,24 @@ export default function App() {
           <button className="text-button" onClick={() => setSearchOpen(true)} ref={searchTriggerRef} type="button">
             choose track
           </button>
-        </div>
+        </div> : <p className="landing-note">one song / one weather / one world</p>}
       </header>
 
+      {landing ? (
+        <section aria-label="find a soundspace" className="landing-page">
+          <TrackSearch
+            landing
+            onChoose={(track) => void chooseSearchResult(track)}
+            onQueryChange={setSearchQuery}
+            onSubmit={submitSearch}
+            query={searchQuery}
+            resolving={resolving}
+            results={searchResults}
+            searching={searching}
+          />
+          <p className="landing-coda">search → forecast → enter</p>
+        </section>
+      ) : <>
       <section className="now-playing" aria-live="polite">
         <div className="artwork-frame">
           <TrackArtwork
@@ -516,11 +542,13 @@ export default function App() {
         </div>
       </section>
 
-      <div aria-label="youtube player" className="youtube-player-host">
+      </>}
+
+      <div aria-label="youtube player" className={landing ? "youtube-player-host youtube-player-host--warming" : "youtube-player-host"}>
         <div ref={player.playerHostRef} />
       </div>
 
-      <section className="player-controls" aria-label="playback controls">
+      {!landing ? <section className="player-controls" aria-label="playback controls">
         <div className="time-row">
           <span>{formatTime(sliderPosition)}</span>
           <span>{formatTime(player.playbackState.durationMs)}</span>
@@ -532,8 +560,9 @@ export default function App() {
           max={Math.max(player.playbackState.durationMs, 1)}
           min="0"
           onChange={(event) => setSeekDraft(Number(event.target.value))}
-          onKeyUp={commitSeek}
-          onPointerUp={commitSeek}
+          onBlur={(event) => commitSeek(Number(event.currentTarget.value))}
+          onKeyUp={(event) => commitSeek(Number(event.currentTarget.value))}
+          onPointerUp={(event) => commitSeek(Number(event.currentTarget.value))}
           step="1000"
           type="range"
           value={sliderPosition}
@@ -573,9 +602,9 @@ export default function App() {
             </IconButton>
           </div>
         </div>
-      </section>
+      </section> : null}
 
-      <aside className="visual-budget" aria-label="visual budget probe">
+      {!landing ? <aside className="visual-budget" aria-label="visual budget probe">
         <div className="visual-budget__header">
           <span>weather / {weatherProgram.classification.primary}</span>
           <strong>{performanceSample ? `${Math.round(performanceSample.fps)} fps` : "sampling"}</strong>
@@ -584,6 +613,9 @@ export default function App() {
           {performanceSample
             ? `${performanceSample.frameMs.toFixed(1)} ms · ${performanceSample.calls} calls · ${performanceSample.triangles.toLocaleString()} tris · ${performanceSample.points.toLocaleString()} pts`
             : `${weatherProgram.classification.rationale} · render probe forming`}
+        </p>
+        <p className="visual-budget__source" title="youtube iframe audio cannot be read by the web audio api">
+          response / authored timeline · no fft
         </p>
         <div className="visual-budget__tiers" aria-label="weather render density">
           {(["low", "balanced", "max"] as const).map((quality) => (
@@ -597,7 +629,7 @@ export default function App() {
             </button>
           ))}
         </div>
-      </aside>
+      </aside> : null}
 
       {player.error || notice ? (
         <aside className="runtime-notice" role="status">
@@ -605,7 +637,7 @@ export default function App() {
         </aside>
       ) : null}
 
-      {searchOpen ? (
+      {!landing && searchOpen ? (
         <section
           aria-label="choose youtube track"
           aria-modal="true"
@@ -613,60 +645,19 @@ export default function App() {
           ref={searchPanelRef}
           role="dialog"
         >
-          <div className="search-sheet">
-            <div className="search-header">
-              <div>
-                <p>another forecast / youtube</p>
-                <h2>find a<br /><i>sound</i></h2>
-              </div>
-              <button aria-label="close track search" className="close-button" onClick={() => {
+          <TrackSearch
+            onChoose={(track) => void chooseSearchResult(track)}
+            onClose={() => {
                 setSearchOpen(false);
                 requestAnimationFrame(() => searchTriggerRef.current?.focus());
-              }} type="button">×</button>
-            </div>
-            <form aria-busy={searching} className="search-form" onSubmit={submitSearch}>
-              <label>
-                <span>artist, title, or whatever you remember</span>
-                <input
-                  aria-label="search youtube"
-                  autoFocus
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="baby ara velvet"
-                  value={searchQuery}
-                />
-              </label>
-              <button disabled={searching || resolving} type="submit">
-                {searching ? "listening…" : "search ↗"}
-              </button>
-            </form>
-
-            <div aria-live="polite" className="search-results">
-              {searching ? <p className="search-state">pulling sound through the weather…</p> : null}
-              {!searching && searchResults.length === 0 ? (
-                <p className="search-state">search for a song, then choose the version that should become a world.</p>
-              ) : null}
-              {searchResults.map((track, index) => (
-                <button
-                  className="search-result"
-                  disabled={resolving}
-                  key={track.id}
-                  onClick={() => void chooseSearchResult(track)}
-                  type="button"
-                >
-                  {track.artworkUrl ? (
-                    <img alt="" src={track.artworkUrl} />
-                  ) : (
-                    <span aria-hidden="true" className="result-placeholder" />
-                  )}
-                  <span>
-                    <strong>{displayCopy(track.title)}</strong>
-                    <small>{displayCopy(track.artists.join(", "))}</small>
-                  </span>
-                  <i>{String(index + 1).padStart(2, "0")} / play</i>
-                </button>
-              ))}
-            </div>
-          </div>
+            }}
+            onQueryChange={setSearchQuery}
+            onSubmit={submitSearch}
+            query={searchQuery}
+            resolving={resolving}
+            results={searchResults}
+            searching={searching}
+          />
         </section>
       ) : null}
     </main>

@@ -89,7 +89,7 @@ export function SoundspaceWorld({
       <Canvas
         camera={{ fov: 46, position: [0, 0, 7.2] }}
         dpr={VISUAL_QUALITY[quality].dpr}
-        frameloop={reducedMotion ? "demand" : "always"}
+        frameloop="always"
         gl={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
         style={{ pointerEvents: "none" }}
       >
