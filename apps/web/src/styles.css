@@ -526,7 +526,7 @@ input:focus-visible {
 
 .artwork-frame {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   width: min(100%, 490px);
   aspect-ratio: 0.92;
   border: 1px solid rgb(242 229 212 / 39%);
@@ -556,10 +556,101 @@ input:focus-visible {
   padding: 0;
   overflow: hidden;
   border: 0;
+  border-radius: inherit;
   color: var(--bone);
   background: radial-gradient(circle at 50% 45%, #4a273e 0, #21131f 58%, #100a11 100%);
   cursor: pointer;
   transition: background-color 260ms ease, box-shadow 420ms var(--ease-out);
+}
+
+.artwork-orb-control canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  transition: filter 360ms ease, transform 520ms var(--ease-out);
+}
+
+.artwork-orb-control > span {
+  position: absolute;
+  z-index: 4;
+  top: 18px;
+  bottom: auto;
+  left: 18px;
+  min-width: min(76%, 290px);
+  padding: 12px 20px 13px;
+  border: 1px solid color-mix(in srgb, var(--weather-accent, var(--bone)) 76%, var(--bone));
+  border-radius: 58% 42% 54% 46% / 46% 61% 39% 54%;
+  color: #160d18;
+  text-align: center;
+  background: var(--weather-accent, var(--bone));
+  box-shadow: 8px 9px 0 color-mix(in srgb, var(--weather-secondary, var(--wine)) 64%, transparent), 0 0 42px var(--weather-glow, rgb(242 229 212 / 18%));
+  font-family: "Bricolage Grotesque", system-ui, sans-serif;
+  font-size: clamp(18px, 2.1vw, 27px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  opacity: 0.94;
+  pointer-events: none;
+  transform: rotate(-1.5deg);
+  animation: weather-entry-beckon 2.2s var(--ease-in-out) infinite alternate;
+}
+
+.artwork-orb-control:disabled { cursor: wait; }
+.artwork-orb-control:disabled > span { opacity: 0.45; }
+.artwork-orb-control[data-active="true"] { cursor: pointer; }
+.artwork-orb-control[data-active="true"] > span {
+  min-width: min(68%, 250px);
+  padding: 10px 18px 11px;
+  border-color: var(--weather-accent, var(--bone));
+  color: var(--bone);
+  background: rgb(24 13 25 / 78%);
+  box-shadow: 6px 7px 0 color-mix(in srgb, var(--weather-secondary, var(--wine)) 46%, transparent);
+  animation: none;
+}
+
+.artwork-orb-control[data-weather="rain"] > span {
+  text-shadow: 0 1px 0 rgb(255 255 255 / 20%);
+}
+
+.artwork-orb-control[data-weather="snow"] > span {
+  color: #10203d;
+}
+
+.artwork-orb-control[data-weather="sun"] > span {
+  color: #251118;
+}
+
+@keyframes weather-entry-beckon {
+  from {
+    filter: brightness(0.94) saturate(0.95);
+    border-radius: 58% 42% 54% 46% / 46% 61% 39% 54%;
+    transform: rotate(-2deg) scale(0.98);
+  }
+  to {
+    filter: brightness(1.12) saturate(1.12);
+    border-radius: 43% 57% 62% 38% / 58% 42% 58% 42%;
+    transform: rotate(1deg) scale(1.035);
+  }
+}
+
+.weather-crest {
+  position: absolute;
+  z-index: 6;
+  top: -42px;
+  right: 22px;
+  display: grid;
+  width: 112px;
+  min-height: 78px;
+  grid-template-columns: 1fr;
+  place-items: center;
+  border: 1px solid rgb(242 229 212 / 64%);
+  border-radius: 57% 43% 61% 39% / 42% 60% 40% 58%;
+  color: var(--weather-accent, var(--bone));
+  background: color-mix(in srgb, var(--weather-panel, #1c111d) 86%, transparent);
+  box-shadow: 8px 9px 0 color-mix(in srgb, var(--weather-secondary, var(--wine)) 48%, transparent), 0 18px 44px var(--weather-glow, transparent);
+  pointer-events: none;
+  backdrop-filter: blur(10px) saturate(1.3);
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  transform: rotate(4deg);
 }
 
 .artwork-orb-control::before {
@@ -577,29 +668,42 @@ input:focus-visible {
   animation: orb-invitation 3.8s var(--ease-in-out) infinite;
 }
 
-.artwork-orb-control canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-  transition: filter 360ms ease, transform 520ms var(--ease-out);
+.artwork-orb-control[data-weather="sun"]::before { display: none; }
+
+.weather-crest svg {
+  width: 82px;
+  height: 57px;
+  margin-top: 2px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
-.artwork-orb-control > span {
-  position: absolute;
-  z-index: 2;
-  bottom: 20px;
-  left: 22px;
-  color: var(--bone-muted);
-  font-family: "Bricolage Grotesque", system-ui, sans-serif;
-  font-size: 21px;
-  letter-spacing: -0.02em;
-  opacity: 0.82;
-  pointer-events: none;
+.weather-crest small {
+  margin-top: -7px;
+  padding-bottom: 8px;
+  color: var(--bone);
+  font-size: 7px;
+  letter-spacing: 0.14em;
 }
 
-.artwork-orb-control:disabled { cursor: wait; }
-.artwork-orb-control:disabled > span { opacity: 0.45; }
-.artwork-orb-control[data-active="true"] { cursor: default; }
+.weather-crest__sun-rays {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: forecast-sun-turn 12s linear infinite;
+}
+
+.weather-crest__sun-core {
+  fill: currentColor;
+  opacity: 0.18;
+  animation: forecast-sun-pulse 2.8s var(--ease-in-out) infinite alternate;
+}
+
+@keyframes forecast-sun-turn { to { transform: rotate(360deg); } }
+@keyframes forecast-sun-pulse { to { opacity: 0.38; transform: scale(1.08); transform-origin: center; } }
 
 @keyframes orb-invitation {
   0%, 100% { opacity: 0.24; transform: translate(-50%, -50%) scale(0.92) rotate(-5deg); }
@@ -1163,6 +1267,27 @@ input[type="range"] { accent-color: var(--amber); }
   transition: transform 150ms var(--ease-out), opacity 150ms ease, background-color 150ms ease;
 }
 
+.search-result[data-embed-status="blocked"] {
+  color: #776c73;
+  background: rgb(42 23 38 / 5%);
+  cursor: not-allowed;
+  filter: grayscale(1);
+  opacity: 0.42;
+}
+
+.search-result[data-embed-status="blocked"] .weather-glyph {
+  animation: none;
+  box-shadow: none;
+}
+
+.search-result[data-embed-status="blocked"] img {
+  filter: grayscale(1) contrast(0.8);
+}
+
+.search-result[data-embed-status="blocked"] i {
+  color: currentColor;
+}
+
 .weather-glyph {
   display: grid;
   width: 34px;
@@ -1245,14 +1370,24 @@ input[type="range"] { accent-color: var(--amber); }
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .artwork-orb-control:hover:not(:disabled) {
+  .artwork-orb-control:hover:not(:disabled):not([data-active="true"]) {
     box-shadow: inset 0 0 74px rgb(190 91 128 / 20%);
   }
-  .artwork-orb-control:hover:not(:disabled) canvas {
+  .artwork-orb-control:hover:not(:disabled):not([data-active="true"]) canvas {
     filter: brightness(1.14) saturate(1.12);
     transform: scale(1.055) rotate(-1.2deg);
   }
-  .artwork-orb-control:hover:not(:disabled) > span { color: var(--bone); opacity: 1; transform: translateX(4px); }
+  .artwork-orb-control:hover:not(:disabled):not([data-active="true"]) > span {
+    color: #160d18;
+    box-shadow: 11px 12px 0 color-mix(in srgb, var(--weather-secondary, var(--wine)) 72%, transparent), 0 0 64px var(--weather-glow, rgb(242 229 212 / 24%));
+    transform: rotate(1deg) scale(1.055);
+  }
+
+  .artwork-orb-control[data-active="true"]:hover > span {
+    color: var(--weather-accent, var(--bone));
+    background: rgb(24 13 25 / 92%);
+    transform: rotate(1deg) scale(1.025);
+  }
 
   .connect-button:hover {
     background: #fff3e1;
@@ -1271,8 +1406,8 @@ input[type="range"] { accent-color: var(--amber); }
   }
 
   .transport-button--primary:hover:not(:disabled) { background: #fff3e1; }
-  .search-result:hover { background: rgb(242 229 212 / 8%); opacity: 0.94; transform: translateX(5px); }
-  .search-sheet--landing .search-result:hover { background: rgb(242 229 212 / 12%); }
+  .search-result:hover:not(:disabled) { background: rgb(242 229 212 / 8%); opacity: 0.94; transform: translateX(5px); }
+  .search-sheet--landing .search-result:hover:not(:disabled) { background: rgb(242 229 212 / 12%); }
 }
 
 @media (max-width: 740px) {
@@ -1293,6 +1428,10 @@ input[type="range"] { accent-color: var(--amber); }
   }
   .now-playing::before { top: 36%; left: 23%; width: 72%; height: 35%; }
   .artwork-frame { transform: rotate(-3deg); }
+  .artwork-orb-control > span { top: 10px; left: 10px; min-width: calc(100% - 20px); padding: 9px 12px 10px; font-size: 16px; }
+  .weather-crest { top: -29px; right: -13px; width: 76px; min-height: 58px; }
+  .weather-crest svg { width: 58px; height: 42px; }
+  .weather-crest small { display: none; }
   .track-copy { margin-left: 0; padding: 0 0 10px; }
   .track-copy h1 { font-size: clamp(42px, 13vw, 68px); }
   .artist-line { font-size: 18px; }

@@ -61,14 +61,16 @@ test.describe("song journeys", () => {
       await expect(page.locator(".now-playing h1")).toHaveText(songCase.track.title.toLowerCase());
       await expect(page.locator(".artist-line")).toHaveText(songCase.track.artists.join(", ").replace(/ - Topic$/, "").toLowerCase());
       await expect(page.locator("main.player-shell")).toHaveCount(1);
-      await expect(page.locator(".youtube-player-host")).toHaveCount(1);
+      await expect(page.locator(".youtube-player-host"))
+        .toHaveAttribute("data-track-id", songCase.track.youtubeVideoId);
       await expect(page.getByRole("complementary", { name: "visual budget probe" })).toBeVisible();
       await expect(page.getByText("forming", { exact: true })).toHaveCount(0);
 
       await page.getByRole("button", { name: `enter ${songCase.track.title.toLowerCase()}` }).click();
       await expect(shell).toHaveAttribute("data-entered", "true");
       await expect(shell).toHaveAttribute("data-weather-stage", "live");
-      await expect(page.getByRole("button", { name: "soundspace entered" })).toContainText("inside");
+      const exitControl = page.getByRole("button", { name: `exit ${songCase.track.title.toLowerCase()}` });
+      await expect(exitControl).toContainText(`exit the ${await shell.getAttribute("data-weather-primary")}`);
       await expect(page.locator(".artist-line")).not.toContainText(" - Topic");
       await expect(page.locator("main.player-shell")).toHaveCount(1);
       await expect(page.locator(".youtube-player-host")).toHaveCount(1);
@@ -78,6 +80,10 @@ test.describe("song journeys", () => {
         await timeline.fill("60000");
         await timeline.blur();
         await expect(page.locator(".time-row span").first()).toHaveText("1:00");
+        await exitControl.click();
+        await expect(shell).toHaveAttribute("data-entered", "false");
+        await expect(shell).toHaveAttribute("data-weather-stage", "pregame");
+        await expect(page.getByRole("button", { name: "pause" })).toBeVisible();
       }
 
       expect(consoleErrors).toEqual([]);

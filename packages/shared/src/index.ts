@@ -8,6 +8,8 @@ export type PlaybackTrack = {
 };
 
 export type YouTubeResolvedTrack = PlaybackTrack & {
+  /** Search-time YouTube status. Omitted for tracks resolved before this check. */
+  embeddable?: boolean;
   provider: "youtube";
   youtubeVideoId: string;
 };
