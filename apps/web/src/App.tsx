@@ -1,8 +1,4 @@
-import type {
-  AuthStatus,
-  PlaybackTrack,
-  SpotifyTrackSummary,
-} from "@soundspace/shared";
+import type { PlaybackTrack } from "@soundspace/shared";
 import {
   type FormEvent,
   type ReactNode,
@@ -10,28 +6,51 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useSpotifyPlayer } from "./useSpotifyPlayer";
+import {
+  type YouTubeResolvedTrack,
+  useYouTubePlayer,
+} from "./useYouTubePlayer";
+import { AMBIENT_VISUAL_STATE } from "./atmosphere/ambient";
+import { sampleMelancholyVisualState } from "./atmosphere/melancholy";
+import { SoundspaceWorld } from "./world/SoundspaceWorld";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
-const FIXTURE_QUERY = 'track:"melancholy" artist:driveways';
+const DEFAULT_ARTIST = "driveways";
+const DEFAULT_TITLE = "melancholy";
 
-const initialAuth: AuthStatus = {
-  authenticated: false,
-  configured: true,
-  profile: null,
+type ResolveSource = "cache" | "youtube";
+
+type ResolveResponse = {
+  source: ResolveSource;
+  track: YouTubeResolvedTrack;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+type ResolvePayload = {
+  source: ResolveSource | string;
+  track: YouTubeResolvedTrack;
+};
+
+type ApiErrorPayload = {
+  message?: string;
+};
+
+function decodeResolveResponse(response: ResolvePayload): ResolveResponse {
+  if (response.source !== "cache" && response.source !== "youtube") {
+    throw new Error("unknown youtube source");
+  }
+  return { source: response.source, track: response.track };
+}
+
+async function resolveTrack(artist: string, title: string): Promise<ResolveResponse> {
+  const params = new URLSearchParams({ artist, title });
+  const response = await fetch(`${API_BASE}/youtube/resolve?${params}`, {
     credentials: "include",
-    ...init,
   });
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(body || `Request failed with status ${response.status}.`);
+    const payload: ApiErrorPayload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `track unavailable (${response.status})`);
   }
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  return decodeResolveResponse(await response.json());
 }
 
 function formatTime(milliseconds: number): string {
@@ -56,7 +75,9 @@ function IconButton({
   return (
     <button
       aria-label={label}
-      className={primary ? "transport-button transport-button--primary" : "transport-button"}
+      className={
+        primary ? "transport-button transport-button--primary" : "transport-button"
+      }
       disabled={disabled}
       onClick={onClick}
       type="button"
@@ -79,175 +100,101 @@ function TrackArtwork({ track }: { track: PlaybackTrack | null }) {
 }
 
 export default function App() {
-  const [auth, setAuth] = useState<AuthStatus>(initialAuth);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [query, setQuery] = useState("melancholy driveways");
-  const [tracks, setTracks] = useState<SpotifyTrackSummary[]>([]);
-  const [selectedTrack, setSelectedTrack] = useState<SpotifyTrackSummary | null>(null);
+  const [artist, setArtist] = useState(DEFAULT_ARTIST);
+  const [title, setTitle] = useState(DEFAULT_TITLE);
+  const [selectedTrack, setSelectedTrack] = useState<YouTubeResolvedTrack | null>(
+    null,
+  );
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searching, setSearching] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [seekDraft, setSeekDraft] = useState<number | null>(null);
   const [volume, setVolume] = useState(0.72);
-
-  const player = useSpotifyPlayer(auth.authenticated);
+  const player = useYouTubePlayer();
   const visibleTrack = player.playbackState.track ?? selectedTrack;
   const playerReady = player.phase === "ready";
   const sliderPosition = seekDraft ?? player.playbackState.positionMs;
+  const playbackProgress = player.playbackState.durationMs
+    ? player.playbackState.positionMs / player.playbackState.durationMs
+    : 0;
+  const visualState = useMemo(() => {
+    if (!player.playbackState.track) return AMBIENT_VISUAL_STATE;
+    return sampleMelancholyVisualState(playbackProgress);
+  }, [playbackProgress, player.playbackState.track]);
 
   const playerStatus = useMemo(() => {
-    if (!auth.authenticated) return "awaiting authentication";
-    if (player.phase === "ready") return "browser playback online";
-    if (player.phase === "error") return "playback needs attention";
-    if (player.phase === "offline") return "browser player offline";
-    return "connecting browser playback";
-  }, [auth.authenticated, player.phase]);
+    if (player.phase === "ready") return "ready";
+    if (player.phase === "error") return "error";
+    if (player.phase === "loading-api") return "loading";
+    return "idle";
+  }, [player.phase]);
 
-  const search = async (searchQuery: string) => {
-    setSearching(true);
+  const chooseTrack = async (
+    nextArtist: string,
+    nextTitle: string,
+    shouldPlay: boolean,
+  ) => {
+    if (!nextArtist.trim() || !nextTitle.trim()) {
+      setNotice("add artist and title");
+      return;
+    }
+
+    setResolving(true);
     setNotice(null);
     try {
-      const result = await request<{ tracks: SpotifyTrackSummary[] }>(
-        `/spotify/search?q=${encodeURIComponent(searchQuery)}`,
-      );
-      setTracks(result.tracks);
-      if (searchQuery === FIXTURE_QUERY && result.tracks[0]) {
-        setSelectedTrack(result.tracks[0]);
-      }
-      if (result.tracks.length === 0) setNotice("No tracks found for that search.");
-    } catch (searchError) {
-      setNotice(
-        searchError instanceof Error ? searchError.message : "Search failed.",
-      );
+      const result = await resolveTrack(nextArtist.trim(), nextTitle.trim());
+      setSelectedTrack(result.track);
+      if (shouldPlay) await player.selectTrack(result.track);
+      setSearchOpen(false);
+    } catch (cause: unknown) {
+      setNotice(cause instanceof Error ? cause.message : "track unavailable");
     } finally {
-      setSearching(false);
+      setResolving(false);
     }
   };
 
   useEffect(() => {
-    const loadAuth = async () => {
-      try {
-        const status = await request<AuthStatus>("/auth/status");
-        setAuth(status);
-        if (status.authenticated) void search(FIXTURE_QUERY);
-      } catch {
-        setNotice("The soundspace API is not reachable yet.");
-      } finally {
-        setAuthLoading(false);
-      }
-    };
-    void loadAuth();
-
-    const authResult = new URLSearchParams(window.location.search).get("auth");
-    if (authResult && authResult !== "success") {
-      setNotice(`Spotify authentication returned: ${authResult.replace("_", " ")}.`);
-    }
-    if (authResult) window.history.replaceState({}, "", window.location.pathname);
+    void chooseTrack(DEFAULT_ARTIST, DEFAULT_TITLE, false);
   }, []);
 
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (query.trim()) void search(query.trim());
-  };
-
-  const playSelection = async (track: SpotifyTrackSummary) => {
-    setSelectedTrack(track);
-    setNotice(null);
-    try {
-      await player.selectTrack(track.uri);
-      setSearchOpen(false);
-    } catch (playError) {
-      setNotice(
-        playError instanceof Error ? playError.message : "The track could not start.",
-      );
-    }
+    void chooseTrack(artist, title, true);
   };
 
   const togglePlayback = async () => {
     try {
       if (!player.playbackState.track && selectedTrack) {
-        await playSelection(selectedTrack);
+        await player.selectTrack(selectedTrack);
+        await player.provider.play();
       } else if (player.playbackState.isPlaying) {
         await player.provider.pause();
       } else {
         await player.provider.play();
       }
-    } catch (toggleError) {
-      setNotice(
-        toggleError instanceof Error ? toggleError.message : "Playback failed.",
-      );
+    } catch (cause: unknown) {
+      setNotice(cause instanceof Error ? cause.message : "click play to start");
     }
   };
 
   const commitSeek = () => {
     if (seekDraft === null) return;
-    void player.provider.seek(seekDraft).catch((seekError: unknown) => {
-      setNotice(seekError instanceof Error ? seekError.message : "Seeking failed.");
+    void player.provider.seek(seekDraft).catch((cause: Error) => {
+      setNotice(cause.message);
     });
     setSeekDraft(null);
   };
 
   const updateVolume = (nextVolume: number) => {
     setVolume(nextVolume);
-    void player.provider.setVolume(nextVolume);
+    void player.provider.setVolume(nextVolume).catch((cause: Error) => {
+      setNotice(cause.message);
+    });
   };
-
-  const logout = async () => {
-    await request<void>("/auth/logout", { method: "POST" });
-    window.location.assign("/");
-  };
-
-  if (authLoading) {
-    return (
-      <main className="loading-screen">
-        <p className="wordmark">soundspace</p>
-        <div className="loading-line" />
-      </main>
-    );
-  }
-
-  if (!auth.authenticated) {
-    return (
-      <main className="auth-screen">
-        <div className="atmosphere" aria-hidden="true">
-          <div className="orbit orbit--one" />
-          <div className="orbit orbit--two" />
-          <div className="signal-core" />
-        </div>
-        <header className="topbar">
-          <p className="wordmark">soundspace</p>
-          <span className="version-tag">player / 001</span>
-        </header>
-        <section className="auth-copy">
-          <p className="eyebrow">Spotify is the clock.</p>
-          <h1>Enter the listening space.</h1>
-          <p className="lede">
-            A basic player for now: one real track, one authoritative timeline,
-            and the foundation for everything the music will become.
-          </p>
-          {notice ? <p className="notice">{notice}</p> : null}
-          {!auth.configured ? (
-            <p className="setup-callout">
-              Spotify credentials are not configured. Copy
-              <code> apps/api/.env.example </code> to <code>.env</code> first.
-            </p>
-          ) : null}
-          <a
-            aria-disabled={!auth.configured}
-            className="connect-button"
-            href={auth.configured ? `${API_BASE}/auth/login` : undefined}
-          >
-            <span>Connect Spotify</span>
-            <span aria-hidden="true">↗</span>
-          </a>
-          <p className="premium-note">Spotify Premium and app test-user access required.</p>
-        </section>
-      </main>
-    );
-  }
 
   return (
     <main className="player-shell" data-playing={player.playbackState.isPlaying}>
+      <SoundspaceWorld visualState={visualState} />
       <div className="player-atmosphere" aria-hidden="true">
         <div className="field-line field-line--outer" />
         <div className="field-line field-line--middle" />
@@ -261,32 +208,33 @@ export default function App() {
           <button className="text-button" onClick={() => setSearchOpen(true)} type="button">
             choose track
           </button>
-          <button className="text-button" onClick={() => void logout()} type="button">
-            disconnect
-          </button>
         </div>
       </header>
 
       <section className="now-playing" aria-live="polite">
         <div className="artwork-frame">
           <TrackArtwork track={visibleTrack} />
-          <span className="artwork-index">SS—001</span>
+          <span className="artwork-index">ss—001</span>
         </div>
         <div className="track-copy">
-          <p className="eyebrow">{player.playbackState.isPlaying ? "Now transmitting" : "Selected signal"}</p>
-          <h1>{visibleTrack?.title ?? "No track selected"}</h1>
-          <p className="artist-line">{visibleTrack?.artists.join(", ") ?? "Choose a track to begin"}</p>
-          <p className="album-line">{visibleTrack?.album ?? "Spotify browser playback"}</p>
+          <h1>{visibleTrack?.title ?? "melancholy"}</h1>
+          <p className="artist-line">
+            {visibleTrack?.artists.join(", ") ?? "driveways"}
+          </p>
         </div>
       </section>
 
-      <section className="player-controls" aria-label="Playback controls">
+      <div aria-label="youtube player" className="youtube-player-host">
+        <div ref={player.playerHostRef} />
+      </div>
+
+      <section className="player-controls" aria-label="playback controls">
         <div className="time-row">
           <span>{formatTime(sliderPosition)}</span>
           <span>{formatTime(player.playbackState.durationMs)}</span>
         </div>
         <input
-          aria-label="Seek position"
+          aria-label="seek position"
           className="timeline"
           disabled={!player.playbackState.durationMs}
           max={Math.max(player.playbackState.durationMs, 1)}
@@ -302,7 +250,7 @@ export default function App() {
           <div className="volume-control">
             <span aria-hidden="true">vol</span>
             <input
-              aria-label="Volume"
+              aria-label="volume"
               max="1"
               min="0"
               onChange={(event) => updateVolume(Number(event.target.value))}
@@ -313,66 +261,62 @@ export default function App() {
           </div>
           <div className="transport-cluster">
             <IconButton
-              disabled={!playerReady}
-              label="Previous track"
+              disabled={!playerReady || !player.playbackState.track}
+              label="restart track"
               onClick={() => void player.provider.previous()}
             >
               <span aria-hidden="true">↤</span>
             </IconButton>
             <IconButton
-              disabled={!playerReady || (!selectedTrack && !player.playbackState.track)}
-              label={player.playbackState.isPlaying ? "Pause" : "Play"}
+              disabled={!playerReady || !selectedTrack}
+              label={player.playbackState.isPlaying ? "pause" : "play"}
               onClick={() => void togglePlayback()}
               primary
             >
               <span aria-hidden="true">{player.playbackState.isPlaying ? "Ⅱ" : "▶"}</span>
             </IconButton>
-            <IconButton
-              disabled={!playerReady}
-              label="Next track"
-              onClick={() => void player.provider.next()}
-            >
+            <IconButton disabled label="next track unavailable" onClick={() => undefined}>
               <span aria-hidden="true">↦</span>
             </IconButton>
           </div>
-          <p className="account-label">{auth.profile?.displayName}<br />{auth.profile?.product}</p>
         </div>
       </section>
 
       {player.error || notice ? (
         <aside className="runtime-notice" role="status">
-          <span>player note</span>
           <p>{player.error ?? notice}</p>
         </aside>
       ) : null}
 
       {searchOpen ? (
-        <section aria-label="Choose a Spotify track" className="search-panel">
+        <section aria-label="choose youtube track" className="search-panel">
           <div className="search-header">
-            <div>
-              <p className="eyebrow">Spotify catalogue</p>
-              <h2>Choose a signal</h2>
-            </div>
-            <button aria-label="Close track search" className="close-button" onClick={() => setSearchOpen(false)} type="button">×</button>
+            <h2>find</h2>
+            <button aria-label="close track search" className="close-button" onClick={() => setSearchOpen(false)} type="button">×</button>
           </div>
           <form className="search-form" onSubmit={submitSearch}>
-            <input
-              aria-label="Search Spotify"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="track, artist, or album"
-              value={query}
-            />
-            <button disabled={searching} type="submit">{searching ? "searching" : "search"}</button>
+            <label>
+              <span>artist</span>
+              <input
+                aria-label="artist"
+                onChange={(event) => setArtist(event.target.value)}
+                placeholder="artist"
+                value={artist}
+              />
+            </label>
+            <label>
+              <span>title</span>
+              <input
+                aria-label="track title"
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="title"
+                value={title}
+              />
+            </label>
+            <button disabled={resolving} type="submit">
+              {resolving ? "resolving" : "play"}
+            </button>
           </form>
-          <div className="search-results">
-            {tracks.map((track) => (
-              <button className="search-result" key={track.id} onClick={() => void playSelection(track)} type="button">
-                {track.artworkUrl ? <img alt="" src={track.artworkUrl} /> : <span className="result-placeholder" />}
-                <span><strong>{track.title}</strong><small>{track.artists.join(", ")} · {track.album}</small></span>
-                <i aria-hidden="true">play</i>
-              </button>
-            ))}
-          </div>
         </section>
       ) : null}
     </main>
