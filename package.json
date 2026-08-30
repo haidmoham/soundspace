@@ -1,0 +1,22 @@
+{
+  "name": "soundspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @soundspace/shared && npm run build -w @soundspace/api && npm run build -w @soundspace/web",
+    "dev": "npm run build -w @soundspace/shared && concurrently -k -n api,web -c magenta,cyan \"npm run dev -w @soundspace/api\" \"npm run dev -w @soundspace/web\"",
+    "typecheck": "npm run build -w @soundspace/shared && npm run typecheck -w @soundspace/api && npm run typecheck -w @soundspace/web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
