@@ -104,42 +104,65 @@ function TrackArtwork({
   active,
   disabled,
   onEnter,
+  onExit,
   profile,
   track,
   visualState,
+  weather,
 }: {
   active: boolean;
   disabled: boolean;
   onEnter(): void;
+  onExit(): void;
   profile: WeatherProfile;
   track: PlaybackTrack | null;
   visualState: VisualState;
+  weather: WeatherKind;
 }) {
   const [inviting, setInviting] = useState(false);
 
   return (
-    <button
-      aria-label={active ? "soundspace entered" : `enter ${displayCopy(track?.title ?? "soundspace")}`}
-      aria-disabled={active}
-      className="artwork-orb-control"
-      data-active={active}
-      disabled={disabled}
-      onBlur={() => setInviting(false)}
-      onClick={active ? undefined : onEnter}
-      onFocus={() => setInviting(true)}
-      onPointerEnter={() => setInviting(true)}
-      onPointerLeave={() => setInviting(false)}
-      tabIndex={active ? -1 : undefined}
-      type="button"
-    >
-      <SoundspaceOrb
-        active={active || inviting}
-        profile={profile}
-        title={track?.title ?? "soundspace"}
-        visualState={visualState}
-      />
-      <span>{active ? "inside" : disabled ? "forming" : "enter ↗"}</span>
-    </button>
+    <>
+      {weather === "sun" ? <WeatherCrest /> : null}
+      <button
+        aria-label={active ? `exit ${displayCopy(track?.title ?? "soundspace")}` : `enter ${displayCopy(track?.title ?? "soundspace")}`}
+        className="artwork-orb-control"
+        data-active={active}
+        data-weather={weather}
+        disabled={disabled}
+        onBlur={() => setInviting(false)}
+        onClick={active ? onExit : onEnter}
+        onFocus={() => setInviting(true)}
+        onPointerEnter={() => setInviting(true)}
+        onPointerLeave={() => setInviting(false)}
+        type="button"
+      >
+        <SoundspaceOrb
+          active={active || inviting}
+          profile={profile}
+          title={track?.title ?? "soundspace"}
+          visualState={visualState}
+        />
+        <span>{active ? `exit the ${weather} ↙` : disabled ? "forming" : `enter the ${weather} ↗`}</span>
+      </button>
+    </>
+  );
+}
+
+function WeatherCrest() {
+  return (
+    <span aria-label="sun forecast" className="weather-crest weather-crest--sun" role="img">
+      <svg aria-hidden="true" viewBox="0 0 96 74">
+        <g className="weather-crest__sun">
+          <g className="weather-crest__sun-rays">
+            <path d="M48 5v11M48 58v11M10 37h12M74 37h12M21 11l8 9M67 54l8 9M75 11l-8 9M29 54l-8 9" />
+          </g>
+          <circle cx="48" cy="37" r="17" />
+          <circle className="weather-crest__sun-core" cx="48" cy="37" r="11" />
+        </g>
+      </svg>
+      <small>sun</small>
+    </span>
   );
 }
 
@@ -420,6 +443,7 @@ export default function App() {
       setSelectedTrack(track);
       setWeatherOverride(null);
       setSearchOpen(false);
+      requestAnimationFrame(() => window.scrollTo(0, 0));
     } catch (cause: unknown) {
       setNotice(cause instanceof Error ? cause.message : "track unavailable");
     } finally {
@@ -465,6 +489,18 @@ export default function App() {
       setNotice(null);
     } catch (cause: unknown) {
       setNotice(cause instanceof Error ? cause.message : "click the orb again");
+    }
+  };
+
+  const exitWorld = async () => {
+    setEntered(false);
+    setEntryTransition(0);
+    setNotice(null);
+    if (!player.playbackState.isPlaying) return;
+    try {
+      await player.provider.pause();
+    } catch (cause: unknown) {
+      setNotice(cause instanceof Error ? cause.message : "the player is still settling");
     }
   };
 
@@ -558,9 +594,11 @@ export default function App() {
             active={entered}
             disabled={!selectedTrack}
             onEnter={() => void enterWorld()}
+            onExit={() => void exitWorld()}
             profile={weatherStructure.profile}
             track={visibleTrack}
             visualState={weatherStructure.visualState}
+            weather={weatherProgram.classification.primary}
           />
         </div>
         <div className="track-copy">

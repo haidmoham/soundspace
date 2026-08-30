@@ -199,7 +199,7 @@ function RainPreview({
     for (let index = 0; index < positions.count; index += 1) {
       let y = positions.getY(index) - delta * (0.7 + precipitation * 2.8);
       let x = positions.getX(index) + delta * wind * 0.32;
-      if (y < -2.2) y = 2.2;
+      if (y < -2.2) y = 2.75;
       if (x > 2.2) x = -2.2;
       positions.setXY(index, x, y);
     }
@@ -289,7 +289,7 @@ function SnowPreview({
     for (let index = 0; index < positions.count; index += 1) {
       let y = positions.getY(index) - delta * (0.16 + (index % 7) * 0.035);
       const x = positions.getX(index) + Math.sin(clock.elapsedTime * 0.3 + index) * delta * 0.06;
-      if (y < -2.25) y = 2.25;
+      if (y < -2.25) y = 2.8;
       positions.setXY(index, x, y);
     }
     positions.needsUpdate = true;
@@ -421,7 +421,7 @@ function OrbScene({ active, profile, title, visualState }: SoundspaceOrbProps) {
         visualState.weather.sunlight,
       );
     }
-    if (group.current) {
+    if (group.current && profile.primaryPhenomenon !== "sun") {
       group.current.rotation.y += delta * (active ? 0.18 : 0.07);
       group.current.rotation.z = Math.sin(clock.elapsedTime * 0.18) * 0.05;
     }
@@ -439,16 +439,18 @@ function OrbScene({ active, profile, title, visualState }: SoundspaceOrbProps) {
             vertexShader={vertexShader}
           />
         </mesh>
-        <points rotation={[0.1, 0.2, 0]}>
-          <icosahedronGeometry args={[1.83, 2]} />
-          <pointsMaterial
-            blending={AdditiveBlending}
-            color={profile.palette.glow}
-            opacity={0.23 + profile.layers.vibrance * 0.12}
-            size={0.018}
-            transparent
-          />
-        </points>
+        {profile.primaryPhenomenon !== "sun" ? (
+          <points rotation={[0.1, 0.2, 0]}>
+            <icosahedronGeometry args={[1.83, 2]} />
+            <pointsMaterial
+              blending={AdditiveBlending}
+              color={profile.palette.glow}
+              opacity={0.23 + profile.layers.vibrance * 0.12}
+              size={0.018}
+              transparent
+            />
+          </points>
+        ) : null}
         <MistPreview profile={profile} visualState={visualState} />
         <RainPreview profile={profile} visualState={visualState} />
         <SnowPreview profile={profile} visualState={visualState} />

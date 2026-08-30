@@ -442,7 +442,7 @@ function SkyAndLight({ profile, reducedMotion, response, visualState }: LayerPro
   useFrame(({ clock }) => {
     if (!material.current) return;
     material.current.uniforms.uTime!.value =
-      !forces.isPlaying ? 0 : clock.elapsedTime * (reducedMotion ? 0.12 : 1);
+      clock.elapsedTime * (reducedMotion ? 0.12 : 1);
     material.current.uniforms.uWind!.value =
       visualState.weather.wind + forces.atmosphericMotion * 0.7;
     material.current.uniforms.uHazeAmount!.value = clamp(
@@ -484,7 +484,7 @@ function CloudMass({ profile, quality, reducedMotion, response, visualState }: L
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!group.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!group.current || presence <= 0.01) return;
     const motion = reducedMotion ? 0.18 : 1;
     const time = clock.elapsedTime * motion;
     const wind = visualState.weather.wind;
@@ -552,7 +552,7 @@ function MistField({ profile, quality, reducedMotion, response, visualState }: L
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!group.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!group.current || presence <= 0.01) return;
     const motion = reducedMotion ? 0.16 : 1;
     const time = clock.elapsedTime * motion;
     group.current.children.forEach((band, index) => {
@@ -626,7 +626,7 @@ function RainSheet({
     (0.72 + forces.precipitationPressure * 0.42);
 
   useFrame(({ clock }, delta) => {
-    if (!lines.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!lines.current || presence <= 0.01) return;
     const motion = reducedMotion ? 0.22 : 1;
     const attribute = lines.current.geometry.getAttribute("position");
     const storm = visualState.weather.stormIntensity;
@@ -652,11 +652,13 @@ function RainSheet({
       if (attribute.getY(end) < -6.2) {
         const length = attribute.getY(start) - attribute.getY(end);
         const x = ((index * 47 + profile.seed) % 173) / 173 * 18 - 9;
-        attribute.setXYZ(start, x, 6.2, attribute.getZ(start));
+        // Respawn above the camera crop. The viewer only sees downward travel,
+        // never a drop jumping from the ground back into the sky.
+        attribute.setXYZ(start, x, 7.8, attribute.getZ(start));
         attribute.setXYZ(
           end,
           x - length * (0.42 + visualState.weather.wind * 0.85),
-          6.2 - length,
+          7.8 - length,
           attribute.getZ(end),
         );
       }
@@ -706,7 +708,7 @@ function WindShear({ profile, quality, reducedMotion, response, visualState }: L
   const presence = rainMembership * forces.viewportPressure;
 
   useFrame((_, delta) => {
-    if (!lines.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!lines.current || presence <= 0.01) return;
     const positions = lines.current.geometry.getAttribute("position");
     const travel =
       delta * (reducedMotion ? 0.16 : 1) *
@@ -767,7 +769,7 @@ function SnowField({ profile, quality, reducedMotion, response, visualState }: L
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }, delta) => {
-    if (!points.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!points.current || presence <= 0.01) return;
     const motion = reducedMotion ? 0.28 : 1;
     const time = clock.elapsedTime * motion;
     const positions = points.current.geometry.getAttribute("position");
@@ -778,7 +780,8 @@ function SnowField({ profile, quality, reducedMotion, response, visualState }: L
       let x = positions.getX(index) +
         Math.sin(time * (0.24 + weight * 0.08) + phase) * delta * motion *
           (0.12 + visualState.weather.wind * 0.24 + forces.gust * 0.16);
-      if (y < -6.2) y = 6.2;
+      // Re-enter above the visible field so every visible snowflake falls.
+      if (y < -6.2) y = 7.6;
       if (x > 9.2) x = -9.2;
       if (x < -9.2) x = 9.2;
       positions.setXY(index, x, y);
@@ -824,12 +827,12 @@ function SolarField({ profile, quality, reducedMotion, response, visualState }: 
   useFrame(({ clock }, delta) => {
     const motion = reducedMotion ? 0.18 : 1;
     const time = clock.elapsedTime * motion;
-    if (group.current && forces.isPlaying) {
+    if (group.current) {
       group.current.rotation.z = time * (0.035 + forces.energy * 0.04);
       const pulse = 1 + Math.sin(time * 2.6) * (0.045 + forces.pulse * 0.08) * presence * motion;
       group.current.scale.setScalar(pulse);
     }
-    if (!points.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!points.current || presence <= 0.01) return;
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < data.phases.length; index += 1) {
       const offset = index * 3;
@@ -908,7 +911,7 @@ function SunRays({ profile, reducedMotion, response, visualState }: LayerProps) 
   const presence = membership * sunlight;
 
   useFrame(({ clock }) => {
-    if (!group.current || !forces.isPlaying) return;
+    if (!group.current) return;
     const motion = reducedMotion ? 0.15 : 1;
     const time = clock.elapsedTime * motion;
     const beat = Math.max(0, Math.sin(time * (2.8 + energy * 3.8)));
@@ -956,7 +959,7 @@ function ParallaxAtmosphere({ profile, reducedMotion, response, visualState }: L
   );
 
   useFrame(({ clock }) => {
-    if (!group.current || !forces.isPlaying) return;
+    if (!group.current) return;
     const motion = reducedMotion ? 0.14 : 1;
     const time = clock.elapsedTime * motion;
     group.current.children.forEach((band, index) => {
@@ -1024,7 +1027,7 @@ function ForegroundOcclusion({
   );
 
   useFrame(({ clock }) => {
-    if (!group.current || !forces.isPlaying) return;
+    if (!group.current) return;
     const motion = reducedMotion ? 0.12 : 1;
     const time = clock.elapsedTime * motion;
     const tumble = rain * (0.12 + forces.viewportPressure * 0.28) * motion;
@@ -1119,7 +1122,7 @@ function AirborneMatter({ profile, quality, reducedMotion, response, visualState
   const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!points.current || !forces.isPlaying || presence <= 0.01) return;
+    if (!points.current || presence <= 0.01) return;
     const motion = reducedMotion ? 0.18 : 1;
     const time = clock.elapsedTime * motion;
     const positions = points.current.geometry.getAttribute("position");
@@ -1209,7 +1212,7 @@ function Electricity({ profile, reducedMotion, response, visualState }: LayerPro
     const primary = Math.max(0, Math.sin(phase) - 0.9) * 10;
     const echo = Math.max(0, Math.sin(phase * 1.93 + 1.7) - 0.955) * 22;
     const flash =
-      reducedMotion || !forces.isPlaying
+      reducedMotion
         ? 0
         : clamp(primary + echo) *
           presence *
