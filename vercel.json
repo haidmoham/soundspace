@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build -w @soundspace/shared && npm run build -w @soundspace/web",
+  "outputDirectory": "apps/web/dist"
+}
