@@ -3,6 +3,7 @@ import type {
   WeatherExpressionResponse,
   WeatherProfile,
 } from "@soundspace/shared";
+import type { MusicResponseEnvelope } from "../atmosphere/music-response";
 import { useFrame } from "@react-three/fiber";
 import {
   AdditiveBlending,
@@ -22,6 +23,8 @@ export type WeatherSystemProps = {
   entryProgress?: number;
   entryVisualState: VisualState;
   expanded: boolean;
+  /** Optional score from the playback response program. */
+  response?: MusicResponseEnvelope;
   profile: WeatherProfile;
   quality: VisualQuality;
   reducedMotion: boolean;
@@ -70,9 +73,10 @@ function phenomenonMembership(profile: WeatherProfile, phenomenon: string) {
 }
 
 function weatherForces({
+  response,
   profile,
   visualState,
-}: Pick<LayerProps, "profile" | "visualState">) {
+}: Pick<LayerProps, "response" | "profile" | "visualState">) {
   const forces = { ...EMPTY_EXPRESSION_RESPONSE };
   for (const relationship of profile.relationships) {
     const driver = Math.max(
@@ -86,12 +90,48 @@ function weatherForces({
     forces.lightVolatility += relationship.response.lightVolatility * amount;
     forces.obscurity += relationship.response.obscurity * amount;
   }
+  // The fallback lets the renderer keep its authored character before the
+  // playback response program is wired by the parent scene.
+  const energy = clamp(
+    response?.energy ??
+      Math.max(forces.particleAgitation, forces.atmosphericMotion * 0.72),
+  );
+  const pulse = clamp(response?.pulse ?? energy * 0.64);
+  const gust = clamp(response?.gust ?? forces.atmosphericMotion);
+  const precipitationPressure = clamp(
+    response?.precipitationPressure ?? visualState.weather.precipitation,
+  );
+  const luminosity = clamp(
+    response?.luminosity ?? visualState.weather.sunlight,
+  );
+  const electricTension = clamp(
+    response?.electricTension ?? visualState.weather.stormIntensity,
+  );
+  const eventStrength = clamp(
+    response?.events.reduce(
+      (strength, event) => Math.max(strength, event.active ? event.strength : 0),
+      0,
+    ) ?? 0,
+  );
+  forces.atmosphericMotion += gust * 0.34 + energy * 0.16;
+  forces.viewportPressure += pulse * 0.3 + eventStrength * 0.28;
+  forces.particleAgitation += energy * 0.28 + pulse * 0.12;
+  forces.lightVolatility += luminosity * 0.1 + electricTension * 0.32 + eventStrength * 0.3;
+  forces.obscurity += precipitationPressure * 0.08;
   return {
     atmosphericMotion: clamp(forces.atmosphericMotion),
     viewportPressure: clamp(forces.viewportPressure),
     particleAgitation: clamp(forces.particleAgitation),
     lightVolatility: clamp(forces.lightVolatility),
     obscurity: clamp(forces.obscurity),
+    electricTension,
+    energy,
+    eventStrength,
+    gust,
+    isPlaying: response?.isPlaying ?? true,
+    luminosity,
+    precipitationPressure,
+    pulse,
   };
 }
 
@@ -360,11 +400,13 @@ const entryFluidFragmentShader = /* glsl */ `
   }
 `;
 
-function SkyAndLight({ profile, reducedMotion, visualState }: LayerProps) {
+function SkyAndLight({ profile, reducedMotion, response, visualState }: LayerProps) {
   const material = useRef<ShaderMaterial>(null);
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
   const baseline = visualState.climate.baseline;
-  const light = clamp(baseline.sunlight * 0.22 + visualState.weather.sunlight * 0.78);
+  const light = clamp(
+    baseline.sunlight * 0.22 + visualState.weather.sunlight * 0.58 + forces.luminosity * 0.2,
+  );
   const warmth = clamp(
     baseline.temperature * 0.35 + visualState.weather.temperature * 0.65,
   );
@@ -389,7 +431,8 @@ function SkyAndLight({ profile, reducedMotion, visualState }: LayerProps) {
 
   useFrame(({ clock }) => {
     if (!material.current) return;
-    material.current.uniforms.uTime!.value = reducedMotion ? 0 : clock.elapsedTime;
+    material.current.uniforms.uTime!.value =
+      reducedMotion || !forces.isPlaying ? 0 : clock.elapsedTime;
     material.current.uniforms.uWind!.value =
       visualState.weather.wind + forces.atmosphericMotion * 0.7;
     material.current.uniforms.uHazeAmount!.value = clamp(
@@ -419,14 +462,14 @@ function SkyAndLight({ profile, reducedMotion, visualState }: LayerProps) {
   );
 }
 
-function CloudMass({ profile, quality, reducedMotion, visualState }: LayerProps) {
+function CloudMass({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const group = useRef<Group>(null);
   const seeds = useMemo(() => createCloudSeeds(profile, quality), [profile, quality]);
   const presence = visualState.semantics.clouds * visualState.weather.cloudCover;
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || presence <= 0.01) return;
+    if (!group.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     const wind = visualState.weather.wind;
     const storm = visualState.weather.stormIntensity;
     const lurch = Math.sin(clock.elapsedTime * 2.3) * forces.viewportPressure;
@@ -485,14 +528,14 @@ function CloudMass({ profile, quality, reducedMotion, visualState }: LayerProps)
   );
 }
 
-function MistField({ profile, quality, reducedMotion, visualState }: LayerProps) {
+function MistField({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const group = useRef<Group>(null);
   const seeds = useMemo(() => createMistSeeds(profile, quality), [profile, quality]);
   const presence = profile.layers.mistDensity * visualState.weather.haze;
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!group.current || reducedMotion || presence <= 0.01) return;
+    if (!group.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     group.current.children.forEach((band, index) => {
       const seed = seeds[index]!;
       const travel = (
@@ -538,6 +581,7 @@ function RainSheet({
   profile,
   quality,
   reducedMotion,
+  response,
   visualState,
 }: LayerProps & { near: boolean }) {
   const lines = useRef<LineSegments>(null);
@@ -551,25 +595,28 @@ function RainSheet({
     [count, near, profile.seed],
   );
   const rainMembership = phenomenonMembership(profile, "rain");
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
   const precipitation = Math.max(
     visualState.climate.baseline.precipitation * 0.82,
     visualState.weather.precipitation,
   );
   const presence =
-    rainMembership * visualState.semantics.precipitation * precipitation;
+    rainMembership *
+    visualState.semantics.precipitation *
+    precipitation *
+    (0.72 + forces.precipitationPressure * 0.42);
 
   useFrame(({ clock }, delta) => {
-    if (!lines.current || reducedMotion || presence <= 0.01) return;
+    if (!lines.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     const attribute = lines.current.geometry.getAttribute("position");
     const storm = visualState.weather.stormIntensity;
     const fall =
       delta *
       (near ? 6.8 : 4.4) *
-      (0.8 + visualState.weather.wind * 1.2 + storm * 0.7);
+      (0.8 + visualState.weather.wind * 1.2 + storm * 0.7 + forces.precipitationPressure * 0.45);
     const gust =
       Math.max(0, Math.sin(clock.elapsedTime * 4.7) - 0.18) *
-      (visualState.weather.wind + forces.viewportPressure) *
+      (visualState.weather.wind + forces.gust + forces.viewportPressure) *
       (storm + forces.atmosphericMotion);
     const drift =
       delta *
@@ -631,15 +678,15 @@ function RainSheet({
   );
 }
 
-function WindShear({ profile, quality, reducedMotion, visualState }: LayerProps) {
+function WindShear({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const lines = useRef<LineSegments>(null);
   const data = useMemo(() => createWindPositions(profile, quality), [profile, quality]);
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
   const rainMembership = phenomenonMembership(profile, "rain");
   const presence = rainMembership * forces.viewportPressure;
 
   useFrame((_, delta) => {
-    if (!lines.current || reducedMotion || presence <= 0.01) return;
+    if (!lines.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     const positions = lines.current.geometry.getAttribute("position");
     const travel =
       delta *
@@ -689,7 +736,7 @@ function PrecipitationField(props: LayerProps) {
   );
 }
 
-function SnowField({ profile, quality, reducedMotion, visualState }: LayerProps) {
+function SnowField({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const points = useRef<Points>(null);
   const data = useMemo(() => createSnowData(profile, quality), [profile, quality]);
   const membership = phenomenonMembership(profile, "snow");
@@ -697,9 +744,10 @@ function SnowField({ profile, quality, reducedMotion, visualState }: LayerProps)
     membership *
     visualState.semantics.precipitation *
     Math.max(visualState.climate.baseline.precipitation, visualState.weather.precipitation);
+  const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }, delta) => {
-    if (!points.current || reducedMotion || presence <= 0.01) return;
+    if (!points.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < data.count; index += 1) {
       const phase = data.phases[index]!;
@@ -707,7 +755,7 @@ function SnowField({ profile, quality, reducedMotion, visualState }: LayerProps)
       let y = positions.getY(index) - delta * (0.16 + weight * 0.32);
       let x = positions.getX(index) +
         Math.sin(clock.elapsedTime * (0.24 + weight * 0.08) + phase) * delta *
-          (0.18 + visualState.weather.wind * 0.42);
+          (0.12 + visualState.weather.wind * 0.24 + forces.gust * 0.16);
       if (y < -6.2) y = 6.2;
       if (x > 9.2) x = -9.2;
       if (x < -9.2) x = 9.2;
@@ -730,7 +778,7 @@ function SnowField({ profile, quality, reducedMotion, visualState }: LayerProps)
         blending={AdditiveBlending}
         color={profile.palette.precipitation}
         depthWrite={false}
-        opacity={presence * 0.92}
+        opacity={presence * (0.68 + visualState.weather.haze * 0.18)}
         size={0.034 + profile.layers.vibrance * 0.032}
         sizeAttenuation
         transparent
@@ -739,7 +787,7 @@ function SnowField({ profile, quality, reducedMotion, visualState }: LayerProps)
   );
 }
 
-function SolarField({ profile, quality, reducedMotion, visualState }: LayerProps) {
+function SolarField({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const group = useRef<Group>(null);
   const points = useRef<Points>(null);
   const data = useMemo(() => createSolarData(profile, quality), [profile, quality]);
@@ -749,14 +797,15 @@ function SolarField({ profile, quality, reducedMotion, visualState }: LayerProps
     visualState.weather.sunlight,
   );
   const presence = membership * sunlight;
+  const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }, delta) => {
-    if (group.current && !reducedMotion) {
-      group.current.rotation.z = clock.elapsedTime * 0.035;
-      const pulse = 1 + Math.sin(clock.elapsedTime * 2.6) * 0.045 * presence;
+    if (group.current && !reducedMotion && forces.isPlaying) {
+      group.current.rotation.z = clock.elapsedTime * (0.035 + forces.energy * 0.04);
+      const pulse = 1 + Math.sin(clock.elapsedTime * 2.6) * (0.045 + forces.pulse * 0.08) * presence;
       group.current.scale.setScalar(pulse);
     }
-    if (!points.current || reducedMotion || presence <= 0.01) return;
+    if (!points.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < data.phases.length; index += 1) {
       const offset = index * 3;
@@ -776,7 +825,7 @@ function SolarField({ profile, quality, reducedMotion, visualState }: LayerProps
           blending={AdditiveBlending}
           color={profile.palette.horizon}
           depthWrite={false}
-          opacity={0.8 * presence}
+          opacity={presence * (0.7 + forces.luminosity * 0.3)}
           transparent
         />
       </mesh>
@@ -786,7 +835,7 @@ function SolarField({ profile, quality, reducedMotion, visualState }: LayerProps
           blending={AdditiveBlending}
           color={profile.palette.glow}
           depthWrite={false}
-          opacity={0.16 * presence}
+          opacity={presence * (0.16 + forces.pulse * 0.14)}
           transparent
         />
       </mesh>
@@ -823,14 +872,224 @@ function SolarField({ profile, quality, reducedMotion, visualState }: LayerProps
   );
 }
 
-function AirborneMatter({ profile, quality, reducedMotion, visualState }: LayerProps) {
+function SunRays({ profile, reducedMotion, response, visualState }: LayerProps) {
+  const group = useRef<Group>(null);
+  const membership = phenomenonMembership(profile, "sun");
+  const sunlight = Math.max(
+    visualState.climate.baseline.sunlight * 0.72,
+    visualState.weather.sunlight,
+  );
+  const forces = weatherForces({ profile, response, visualState });
+  const energy = forces.energy;
+  const presence = membership * sunlight;
+
+  useFrame(({ clock }) => {
+    if (!group.current || reducedMotion || !forces.isPlaying) return;
+    const beat = Math.max(0, Math.sin(clock.elapsedTime * (2.8 + energy * 3.8)));
+    group.current.rotation.z = clock.elapsedTime * (0.018 + energy * 0.045);
+    group.current.scale.setScalar(1 + beat * (0.06 + energy * 0.12) * presence);
+  });
+
+  return (
+    <group position={[3, 1.1, -1.05]} ref={group} visible={presence > 0.01}>
+      {[-1.06, -0.62, -0.18, 0.27, 0.72, 1.17].map((rotation, index) => (
+        <mesh key={rotation} rotation={[0, 0, rotation]}>
+          <planeGeometry args={[0.055 + (index % 2) * 0.04, 9.2]} />
+          <meshBasicMaterial
+            blending={AdditiveBlending}
+            color={profile.palette.glow}
+            depthWrite={false}
+            opacity={presence * (0.055 + energy * 0.065)}
+            transparent
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ParallaxAtmosphere({ profile, reducedMotion, response, visualState }: LayerProps) {
+  const group = useRef<Group>(null);
+  const forces = weatherForces({ profile, response, visualState });
+  const cloudPresence = visualState.semantics.clouds * visualState.weather.cloudCover;
+  const mistPresence = profile.layers.mistDensity * visualState.weather.haze;
+  const bands = useMemo<
+    readonly {
+      drift: number;
+      opacity: number;
+      position: [number, number, number];
+      scale: [number, number, number];
+    }[]
+  >(
+    () => [
+      { drift: 0.14, opacity: 0.2, position: [-1.8, 2.7, -3.7], scale: [6.8, 1.45, 1] },
+      { drift: 0.38, opacity: 0.28, position: [2.8, 1.75, -0.9], scale: [5.4, 1.22, 1] },
+      { drift: 0.72, opacity: 0.16, position: [-3.8, 0.65, 1.7], scale: [4.6, 0.92, 1] },
+    ],
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    if (!group.current || reducedMotion || !forces.isPlaying) return;
+    group.current.children.forEach((band, index) => {
+      const seed = bands[index]!;
+      band.position.x =
+        seed.position[0] +
+        Math.sin(clock.elapsedTime * (0.08 + seed.drift * 0.2) + index) *
+          (0.14 + forces.gust * seed.drift * 0.75);
+      band.position.y =
+        seed.position[1] +
+        Math.cos(clock.elapsedTime * (0.11 + seed.drift * 0.12) + index) *
+          forces.energy * seed.drift * 0.12;
+    });
+  });
+
+  return (
+    <group ref={group} visible={cloudPresence + mistPresence > 0.01}>
+      {bands.map((band, index) => (
+        <group key={band.position[2]} position={band.position}>
+          <mesh scale={band.scale}>
+            <circleGeometry args={[1, 64]} />
+            <meshBasicMaterial
+              color={index === 1 ? profile.palette.cloudLight : profile.palette.cloudDark}
+              depthWrite={false}
+              opacity={cloudPresence * band.opacity * (1 + forces.precipitationPressure * 0.3)}
+              transparent
+            />
+          </mesh>
+          <mesh position={[0, -0.45, 0.08]} scale={[band.scale[0] * 1.12, band.scale[1] * 0.42, 1]}>
+            <circleGeometry args={[1, 48]} />
+            <meshBasicMaterial
+              color={profile.palette.haze}
+              depthWrite={false}
+              opacity={mistPresence * (0.1 + band.drift * 0.1)}
+              transparent
+            />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+function ForegroundOcclusion({
+  expanded,
+  profile,
+  reducedMotion,
+  response,
+  visualState,
+}: LayerProps) {
+  const group = useRef<Group>(null);
+  const rain = phenomenonMembership(profile, "rain") * Math.max(
+    visualState.climate.baseline.precipitation,
+    visualState.weather.precipitation,
+  );
+  const snow = phenomenonMembership(profile, "snow") * Math.max(
+    visualState.climate.baseline.precipitation,
+    visualState.weather.precipitation,
+  );
+  const forces = weatherForces({ profile, response, visualState });
+  const presence = clamp(
+    rain * (0.44 + visualState.weather.stormIntensity * 0.5) +
+      snow * 0.32 +
+      visualState.weather.haze * 0.18,
+  );
+
+  useFrame(({ clock }) => {
+    if (!group.current || reducedMotion || !forces.isPlaying) return;
+    const tumble = rain * (0.12 + forces.viewportPressure * 0.28);
+    group.current.position.x =
+      Math.sin(clock.elapsedTime * (0.38 + forces.atmosphericMotion * 1.8)) * tumble;
+    group.current.position.y =
+      Math.cos(clock.elapsedTime * 0.21) * snow * 0.035 - tumble * 0.12;
+    group.current.rotation.z = Math.sin(clock.elapsedTime * 0.52) * tumble * 0.05;
+  });
+
+  return (
+    <group ref={group} visible={expanded && presence > 0.01}>
+      <mesh position={[-6.1, -2.6, 2.75]} rotation={[0, 0, -0.18]} scale={[4.7, 1.7, 1]}>
+        <circleGeometry args={[1, 48]} />
+        <meshBasicMaterial
+          color={profile.palette.cloudDark}
+          depthWrite={false}
+          opacity={presence * 0.56}
+          transparent
+        />
+      </mesh>
+      <mesh position={[6.25, -2.1, 2.78]} rotation={[0, 0, 0.25]} scale={[4.4, 1.45, 1]}>
+        <circleGeometry args={[1, 48]} />
+        <meshBasicMaterial
+          color={profile.palette.cloudLight}
+          depthWrite={false}
+          opacity={presence * (0.26 + snow * 0.15)}
+          transparent
+        />
+      </mesh>
+      <mesh position={[0, -3.52, 2.55]} scale={[7.9, 0.42 + rain * 0.18, 1]}>
+        <circleGeometry args={[1, 64]} />
+        <meshBasicMaterial
+          blending={rain > 0.01 ? AdditiveBlending : undefined}
+          color={rain > 0.01 ? profile.palette.precipitation : profile.palette.haze}
+          depthWrite={false}
+          opacity={presence * (0.22 + rain * 0.22)}
+          transparent
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function CameraWeatherEvents({
+  expanded,
+  profile,
+  reducedMotion,
+  response,
+  visualState,
+}: LayerProps) {
+  const baseline = useRef<{ fov: number; z: number } | null>(null);
+  const rain = phenomenonMembership(profile, "rain") * Math.max(
+    visualState.weather.precipitation,
+    visualState.weather.stormIntensity,
+  );
+  const sun = phenomenonMembership(profile, "sun") * Math.max(
+    visualState.climate.baseline.sunlight,
+    visualState.weather.sunlight,
+  );
+  const snow = phenomenonMembership(profile, "snow") * visualState.weather.precipitation;
+  const forces = weatherForces({ profile, response, visualState });
+
+  useFrame(({ camera, clock }, delta) => {
+    if (!("fov" in camera)) return;
+    // SAFETY: The fov guard above narrows this Canvas camera to a perspective camera.
+    const perspectiveCamera = camera as typeof camera & { fov: number; updateProjectionMatrix: () => void };
+    baseline.current ??= { fov: perspectiveCamera.fov, z: camera.position.z };
+    const base = baseline.current;
+    const impact = Math.max(forces.pulse, forces.eventStrength);
+    const live = expanded && !reducedMotion && forces.isPlaying;
+    const stormJolt = live
+      ? Math.sin(clock.elapsedTime * (3.6 + forces.viewportPressure * 7.2)) *
+        rain *
+        (0.025 + forces.viewportPressure * 0.09)
+      : 0;
+    const targetZ = base.z - (live ? sun * 0.16 + rain * 0.09 + impact * 0.22 : 0);
+    const targetFov = base.fov + (live ? rain * 1.35 - sun * 0.82 + snow * 0.24 + impact * 1.8 : 0);
+    const smoothing = Math.min(1, delta * 7.5);
+    camera.position.z += (targetZ + stormJolt - camera.position.z) * smoothing;
+    perspectiveCamera.fov += (targetFov - perspectiveCamera.fov) * smoothing;
+    perspectiveCamera.updateProjectionMatrix();
+  });
+
+  return null;
+}
+
+function AirborneMatter({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const points = useRef<Points>(null);
   const data = useMemo(() => createParticleData(profile, quality), [profile, quality]);
   const presence = visualState.semantics.particles * profile.layers.particleDensity;
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
-    if (!points.current || reducedMotion || presence <= 0.01) return;
+    if (!points.current || reducedMotion || !forces.isPlaying || presence <= 0.01) return;
     const positions = points.current.geometry.getAttribute("position");
     const storm = visualState.weather.stormIntensity;
     const speed =
@@ -889,13 +1148,13 @@ function AirborneMatter({ profile, quality, reducedMotion, visualState }: LayerP
   );
 }
 
-function Electricity({ profile, reducedMotion, visualState }: LayerProps) {
+function Electricity({ profile, reducedMotion, response, visualState }: LayerProps) {
   const lines = useRef<LineSegments>(null);
   const material = useRef<LineBasicMaterial>(null);
   const flashMaterial = useRef<MeshBasicMaterial>(null);
   const light = useRef<PointLight>(null);
   const positions = useMemo(() => createBoltPositions(profile), [profile]);
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
   const presence =
     visualState.semantics.electricity *
     visualState.weather.stormIntensity *
@@ -912,16 +1171,17 @@ function Electricity({ profile, reducedMotion, visualState }: LayerProps) {
       clock.elapsedTime *
         (0.7 +
           profile.layers.electricityFrequency * 2.4 +
-          forces.lightVolatility * 1.8) +
+          forces.lightVolatility * 1.8 +
+          forces.electricTension * 2.4) +
       profile.seed * 0.013;
     const primary = Math.max(0, Math.sin(phase) - 0.9) * 10;
     const echo = Math.max(0, Math.sin(phase * 1.93 + 1.7) - 0.955) * 22;
     const flash =
-      reducedMotion
+      reducedMotion || !forces.isPlaying
         ? 0
         : clamp(primary + echo) *
           presence *
-          (0.62 + forces.lightVolatility * 0.9);
+          (0.62 + forces.lightVolatility * 0.9 + forces.electricTension * 0.55);
     material.current.opacity = Math.min(1, flash * 1.2);
     flashMaterial.current.opacity = flash *
       (0.38 + profile.layers.vibrance * 0.18);
@@ -976,14 +1236,15 @@ function StormBody({
   expanded,
   profile,
   reducedMotion,
+  response,
   visualState,
 }: LayerProps & { children: ReactNode }) {
   const group = useRef<Group>(null);
-  const forces = weatherForces({ profile, visualState });
+  const forces = weatherForces({ profile, response, visualState });
 
   useFrame(({ clock }) => {
     if (!group.current) return;
-    const pressure = expanded && !reducedMotion ? forces.viewportPressure : 0;
+    const pressure = expanded && !reducedMotion && forces.isPlaying ? forces.viewportPressure : 0;
     if (pressure <= 0.01) {
       group.current.position.set(0, 0, 0);
       group.current.rotation.z = 0;
@@ -1006,7 +1267,7 @@ function StormBody({
     );
   });
 
-  return <group ref={group}>{children}</group>;
+  return <group ref={group} visible={expanded}>{children}</group>;
 }
 
 function WeatherExpansion({
@@ -1101,14 +1362,18 @@ export function WeatherSystem(props: WeatherSystemProps) {
       <fog attach="fog" args={[fogColor, 3.8, 13 - haze * 6.4]} />
       <SkyAndLight {...props} />
       <StormBody {...props}>
+        <ParallaxAtmosphere {...props} />
         <CloudMass {...props} />
         <MistField {...props} />
         <PrecipitationField {...props} />
         <WindShear {...props} />
         <AirborneMatter {...props} />
         <SolarField {...props} />
+        <SunRays {...props} />
         <Electricity {...props} />
+        <ForegroundOcclusion {...props} />
       </StormBody>
+      <CameraWeatherEvents {...props} />
       <WeatherExpansion {...props} />
     </>
   );

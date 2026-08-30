@@ -1,6 +1,7 @@
 import type { VisualState, WeatherProfile } from "@soundspace/shared";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useEffect, useRef, useState } from "react";
+import type { MusicResponseEnvelope } from "../atmosphere/music-response";
 import {
   VISUAL_QUALITY,
   WeatherSystem,
@@ -26,6 +27,7 @@ type SoundspaceWorldProps = {
   onPerformanceSample?(sample: PerformanceSample): void;
   profile: WeatherProfile;
   quality: VisualQuality;
+  response: MusicResponseEnvelope;
   visualState: VisualState;
 };
 
@@ -77,6 +79,7 @@ export function SoundspaceWorld({
   onPerformanceSample,
   profile,
   quality,
+  response,
   visualState,
 }: SoundspaceWorldProps) {
   const reducedMotion = useReducedMotion();
@@ -97,6 +100,7 @@ export function SoundspaceWorld({
           profile={profile}
           quality={quality}
           reducedMotion={reducedMotion}
+          response={response}
           visualState={visualState}
         />
         <RenderBudgetMeter onSample={onPerformanceSample} />
