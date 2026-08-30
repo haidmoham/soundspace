@@ -95,6 +95,104 @@ export type VisualState = {
   audio: AudioFeatures;
 };
 
+export type WeatherPalette = {
+  sky: string;
+  horizon: string;
+  cloudDark: string;
+  cloudLight: string;
+  haze: string;
+  precipitation: string;
+  particle: string;
+  electricity: string;
+  glow: string;
+};
+
+/**
+ * Layer values are normalized from 0 to 1. The renderer converts them into
+ * counts, scale, opacity, and motion.
+ */
+export type WeatherLayerTuning = {
+  skyTexture: number;
+  vibrance: number;
+  cloudDensity: number;
+  cloudDepth: number;
+  mistDensity: number;
+  precipitationDensity: number;
+  particleDensity: number;
+  electricityFrequency: number;
+  turbulence: number;
+};
+
+export type WeatherPhenomenon = string;
+export type WeatherDriver = keyof WeatherState;
+
+export type WeatherExpressionResponse = {
+  atmosphericMotion: number;
+  viewportPressure: number;
+  particleAgitation: number;
+  lightVolatility: number;
+  obscurity: number;
+};
+
+/**
+ * A relationship maps physical weather to an authored emotional behavior.
+ * The character is an open label. The response is the renderer contract.
+ */
+export type WeatherRelationship = {
+  phenomenon: WeatherPhenomenon;
+  characters: readonly [string, ...string[]];
+  driver: WeatherDriver;
+  membership: number;
+  response: WeatherExpressionResponse;
+};
+
+export type WeatherProfile = {
+  id: string;
+  seed: number;
+  primaryPhenomenon: WeatherPhenomenon;
+  palette: WeatherPalette;
+  layers: WeatherLayerTuning;
+  relationships: readonly [WeatherRelationship, ...WeatherRelationship[]];
+};
+
+export type WeatherProfileInput = Omit<
+  WeatherProfile,
+  "primaryPhenomenon" | "relationships"
+> & {
+  relationships: readonly [WeatherRelationship, ...WeatherRelationship[]];
+};
+
+export type WeatherStructure<
+  TKind extends string,
+  TDetails extends object,
+> = {
+  kind: TKind;
+  profile: WeatherProfile;
+  visualState: VisualState;
+  details: TDetails;
+};
+
+export type PregameWeatherStructure = WeatherStructure<
+  "pregame",
+  {
+    containment: "artwork-orb";
+    expansionOrigin: "artwork-orb";
+    forecastProgress: number;
+  }
+>;
+
+export type LiveWeatherStructure = WeatherStructure<
+  "live",
+  {
+    expansionOrigin: "artwork-orb";
+    playbackProgress: number;
+  }
+>;
+
+export type SoundspaceWeatherStructure =
+  | PregameWeatherStructure
+  | LiveWeatherStructure;
+
 export const EMPTY_WEATHER_STATE: WeatherState = {
   cloudCover: 0,
   precipitation: 0,
@@ -131,6 +229,54 @@ type VisualStateInput = {
 };
 
 const clampUnit = (value: number) => Math.min(1, Math.max(0, value));
+const WEATHER_DOMINANCE_FLOOR = 0.6;
+
+const normalizeExpressionResponse = (
+  response: WeatherExpressionResponse,
+): WeatherExpressionResponse => ({
+  atmosphericMotion: clampUnit(response.atmosphericMotion),
+  viewportPressure: clampUnit(response.viewportPressure),
+  particleAgitation: clampUnit(response.particleAgitation),
+  lightVolatility: clampUnit(response.lightVolatility),
+  obscurity: clampUnit(response.obscurity),
+});
+
+export const defineWeatherProfile = (
+  input: WeatherProfileInput,
+): WeatherProfile => {
+  const [first, ...rest] = input.relationships;
+  const membershipTotal = input.relationships.reduce(
+    (total, relationship) => total + clampUnit(relationship.membership),
+    0,
+  );
+  if (membershipTotal <= 0) {
+    throw new Error("a weather profile needs positive fuzzy membership");
+  }
+  const normalizeRelationship = (
+    relationship: WeatherRelationship,
+  ): WeatherRelationship => ({
+    ...relationship,
+    membership: clampUnit(relationship.membership) / membershipTotal,
+    response: normalizeExpressionResponse(relationship.response),
+  });
+  const relationships = [
+    normalizeRelationship(first),
+    ...rest.map(normalizeRelationship),
+  ] as const;
+  const primary = relationships.reduce((dominant, relationship) =>
+    relationship.membership > dominant.membership ? relationship : dominant,
+  );
+  if (primary.membership < WEATHER_DOMINANCE_FLOOR) {
+    throw new Error(
+      `a weather profile needs a dominant membership of at least ${WEATHER_DOMINANCE_FLOOR}`,
+    );
+  }
+  return {
+    ...input,
+    primaryPhenomenon: primary.phenomenon,
+    relationships,
+  };
+};
 
 const interpolate = (from: number, to: number, amount: number) =>
   from + (to - from) * clampUnit(amount);
@@ -275,4 +421,37 @@ export const composeVisualState = ({
   weather: normalizeWeather(weather),
   semantics: normalizeSemantics(semantics),
   audio: normalizeAudio(audio),
+});
+
+export const blendVisualStates = (
+  from: VisualState,
+  to: VisualState,
+  amount: number,
+): VisualState => ({
+  climate: {
+    baseline: interpolateWeather(
+      from.climate.baseline,
+      to.climate.baseline,
+      amount,
+    ),
+  },
+  weather: interpolateWeather(from.weather, to.weather, amount),
+  semantics: interpolateSemantics(from.semantics, to.semantics, amount),
+  audio: normalizeAudio({
+    lowEnergy: interpolate(from.audio.lowEnergy, to.audio.lowEnergy, amount),
+    midEnergy: interpolate(from.audio.midEnergy, to.audio.midEnergy, amount),
+    highEnergy: interpolate(from.audio.highEnergy, to.audio.highEnergy, amount),
+    spectralCentroid: interpolate(
+      from.audio.spectralCentroid,
+      to.audio.spectralCentroid,
+      amount,
+    ),
+    spectralFlux: interpolate(
+      from.audio.spectralFlux,
+      to.audio.spectralFlux,
+      amount,
+    ),
+    rms: interpolate(from.audio.rms, to.audio.rms, amount),
+    transient: interpolate(from.audio.transient, to.audio.transient, amount),
+  }),
 });

@@ -1,0 +1,5 @@
+.codex-tmp/
+apps/api/.data/
+**/.env
+**/.env.*
+!**/.env.example

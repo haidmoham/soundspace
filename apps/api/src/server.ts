@@ -24,7 +24,7 @@ const env = {
   databasePath: process.env.SOUNDSPACE_DATABASE_PATH?.trim() || LOCAL_DATABASE_PATH,
   webOrigin: process.env.WEB_ORIGIN?.trim() ?? "http://127.0.0.1:5173",
   host: process.env.API_HOST?.trim() ?? "127.0.0.1",
-  port: Number.parseInt(process.env.API_PORT ?? "8787", 10),
+  port: Number.parseInt(process.env.API_PORT ?? process.env.PORT ?? "8787", 10),
   isProduction: process.env.NODE_ENV === "production",
 };
 
@@ -71,6 +71,13 @@ const YouTubeVideoResponseSchema = z.object({
     }),
   ),
 });
+const YouTubeErrorResponseSchema = z.object({
+  error: z
+    .object({
+      message: z.string().optional(),
+    })
+    .optional(),
+});
 
 type YouTubeThumbnailSet = z.infer<typeof YouTubeThumbnailSetSchema>;
 
@@ -93,7 +100,14 @@ function preferredArtworkUrl(
 }
 
 async function readSearchCandidates(response: Response): Promise<YouTubeCandidate[]> {
-  const parsed = YouTubeSearchResponseSchema.safeParse(await response.json());
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("youtube search returned invalid JSON.");
+  }
+
+  const parsed = YouTubeSearchResponseSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("youtube search returned an unexpected response shape.");
   }
@@ -107,7 +121,14 @@ async function readSearchCandidates(response: Response): Promise<YouTubeCandidat
 }
 
 async function readEmbeddableVideoIds(response: Response): Promise<Set<string>> {
-  const parsed = YouTubeVideoResponseSchema.safeParse(await response.json());
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("youtube video lookup returned invalid JSON.");
+  }
+
+  const parsed = YouTubeVideoResponseSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("youtube video lookup returned an unexpected response shape.");
   }
@@ -120,11 +141,111 @@ async function readEmbeddableVideoIds(response: Response): Promise<Set<string>> 
 }
 
 function normalizeQueryPart(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+  return decodeYouTubeText(value)
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("en-US");
 }
 
 function createCacheKey(artist: string, title: string): string {
   return `${normalizeQueryPart(artist)}\u001f${normalizeQueryPart(title)}`;
+}
+
+function normalizedChannelArtist(channelTitle: string): string {
+  return normalizeQueryPart(stripTopicSuffix(channelTitle));
+}
+
+function decodeYouTubeText(value: string): string {
+  const namedEntities = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    quot: '"',
+  } satisfies Record<string, string>;
+
+  const decodeCodePoint = (match: string, code: string, radix: number) => {
+    const codePoint = Number.parseInt(code, radix);
+    if (
+      !Number.isInteger(codePoint) ||
+      codePoint < 0 ||
+      codePoint > 0x10ffff ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ) {
+      return match;
+    }
+    return String.fromCodePoint(codePoint);
+  };
+
+  return value
+    .replace(/&#(\d+);/g, (match, code: string) =>
+      decodeCodePoint(match, code, 10),
+    )
+    .replace(/&#x([\da-f]+);/gi, (match, code: string) =>
+      decodeCodePoint(match, code, 16),
+    )
+    .replace(/&(amp|apos|gt|lt|quot);/g, (match, name: string) => {
+      switch (name) {
+        case "amp":
+          return namedEntities.amp;
+        case "apos":
+          return namedEntities.apos;
+        case "gt":
+          return namedEntities.gt;
+        case "lt":
+          return namedEntities.lt;
+        case "quot":
+          return namedEntities.quot;
+        default:
+          return match;
+      }
+    });
+}
+
+function stripTopicSuffix(value: string): string {
+  const topicSuffix = " - Topic";
+  return value.endsWith(topicSuffix)
+    ? value.slice(0, -topicSuffix.length)
+    : value;
+}
+
+function displayArtist(channelTitle: string): string {
+  return stripTopicSuffix(decodeYouTubeText(channelTitle).trim()).trim();
+}
+
+function displayTitle(videoTitle: string, artist: string): string {
+  const decodedTitle = decodeYouTubeText(videoTitle).trim();
+  const escapedArtist = artist.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutArtistPrefix = decodedTitle.replace(
+    new RegExp(`^${escapedArtist}\\s*[-–—:]\\s*`, "i"),
+    "",
+  );
+
+  const withoutReleaseTag = withoutArtistPrefix.replace(
+    /\s*[[(]\s*(?:official\s+)?(?:(?:music|lyric)\s+)?(?:video|audio|visuali[sz]er|lyrics?)\s*[\])]\s*$/i,
+    "",
+  );
+  return withoutReleaseTag.trim() || decodedTitle;
+}
+
+function candidateMatchesRequest(
+  candidate: YouTubeCandidate,
+  artist: string,
+  title: string,
+): boolean {
+  const normalizedArtist = normalizeQueryPart(artist);
+  const normalizedTitle = normalizeQueryPart(title);
+  const normalizedVideoTitle = normalizeQueryPart(candidate.title);
+  const normalizedChannel = normalizeQueryPart(candidate.channelTitle);
+  const channelArtist = normalizedChannelArtist(candidate.channelTitle);
+
+  const hasArtist =
+    channelArtist === normalizedArtist ||
+    normalizedChannel.includes(normalizedArtist) ||
+    normalizedVideoTitle.includes(normalizedArtist);
+  const hasTitle = normalizedVideoTitle.includes(normalizedTitle);
+
+  return hasArtist && hasTitle;
 }
 
 function scoreCandidate(
@@ -136,16 +257,19 @@ function scoreCandidate(
   const normalizedTitle = normalizeQueryPart(title);
   const normalizedVideoTitle = normalizeQueryPart(candidate.title);
   const normalizedChannel = normalizeQueryPart(candidate.channelTitle);
+  const channelArtist = normalizedChannelArtist(candidate.channelTitle);
   const searchableText = `${normalizedVideoTitle} ${normalizedChannel}`;
   let score = 0;
 
-  if (normalizedVideoTitle.includes(normalizedTitle)) score += 24;
-  if (normalizedVideoTitle.includes(normalizedArtist)) score += 20;
-  if (normalizedChannel.includes(normalizedArtist)) score += 18;
-  if (normalizedVideoTitle.includes("official audio")) score += 48;
+  if (normalizedVideoTitle === normalizedTitle) score += 120;
+  else if (normalizedVideoTitle.includes(normalizedTitle)) score += 60;
+  if (channelArtist === normalizedArtist) score += 120;
+  else if (normalizedChannel.includes(normalizedArtist)) score += 60;
+  if (normalizedVideoTitle.includes(normalizedArtist)) score += 48;
+  if (normalizedVideoTitle.includes("official audio")) score += 24;
   if (normalizedVideoTitle.includes("official")) score += 16;
   if (normalizedVideoTitle.includes("audio")) score += 12;
-  if (normalizedChannel.includes("topic")) score += 16;
+  if (normalizedChannel.endsWith(" - topic")) score += 24;
 
   for (const signal of ["cover", "reaction", "live", "slowed", "nightcore"]) {
     if (searchableText.includes(signal)) score -= 80;
@@ -173,7 +297,7 @@ function rankCandidates(
 }
 
 function toResolvedTrack(
-  artist: string,
+  requestedArtist: string,
   cached: {
     youtubeVideoId: string;
     displayTitle: string;
@@ -181,15 +305,30 @@ function toResolvedTrack(
     artworkUrl: string | null;
   },
 ): YouTubeResolvedTrack {
+  const artist = displayArtist(cached.channelTitle) || requestedArtist.trim();
   return {
     id: cached.youtubeVideoId,
     uri: cached.youtubeVideoId,
     youtubeVideoId: cached.youtubeVideoId,
     provider: "youtube",
-    title: cached.displayTitle,
+    title: displayTitle(cached.displayTitle, artist),
     artists: [artist],
     album: cached.channelTitle,
     artworkUrl: cached.artworkUrl ?? undefined,
+  };
+}
+
+function candidateToResolvedTrack(candidate: YouTubeCandidate): YouTubeResolvedTrack {
+  const artist = displayArtist(candidate.channelTitle) || "YouTube";
+  return {
+    id: candidate.youtubeVideoId,
+    uri: candidate.youtubeVideoId,
+    youtubeVideoId: candidate.youtubeVideoId,
+    provider: "youtube",
+    title: displayTitle(candidate.title, artist),
+    artists: [artist],
+    album: candidate.channelTitle,
+    artworkUrl: candidate.artworkUrl,
   };
 }
 
@@ -205,25 +344,44 @@ await app.register(cors, {
   origin: env.webOrigin,
 });
 
-async function findYouTubeCandidates(
-  artist: string,
-  title: string,
+async function youtubeResponseError(
+  response: Response,
+  resource: string,
+): Promise<Error> {
+  let apiMessage: string | undefined;
+  try {
+    const parsed = YouTubeErrorResponseSchema.safeParse(await response.json());
+    if (parsed.success) apiMessage = parsed.data.error?.message;
+  } catch {
+    // Keep the status error when YouTube does not return JSON.
+  }
+
+  const detail = apiMessage ? `: ${apiMessage}` : ".";
+  return new Error(
+    `youtube ${resource} failed with status ${response.status}${detail}`,
+  );
+}
+
+async function searchYouTubeCandidates(
+  query: string,
+  maxResults = 10,
 ): Promise<YouTubeCandidate[]> {
-  const query = `${artist} ${title} official audio`;
   const searchUrl = new URL("https://www.googleapis.com/youtube/v3/search");
   searchUrl.search = new URLSearchParams({
     key: env.youtubeApiKey,
     part: "snippet",
     q: query,
     type: "video",
-    maxResults: "10",
+    maxResults: String(maxResults),
     videoEmbeddable: "true",
     videoSyndicated: "true",
   }).toString();
 
-  const response = await fetch(searchUrl);
+  const response = await fetch(searchUrl, {
+    signal: AbortSignal.timeout(12_000),
+  });
   if (!response.ok) {
-    throw new Error(`youtube search failed with status ${response.status}.`);
+    throw await youtubeResponseError(response, "search");
   }
 
   const candidates = await readSearchCandidates(response);
@@ -236,18 +394,26 @@ async function findYouTubeCandidates(
     id: candidates.map((candidate) => candidate.youtubeVideoId).join(","),
   }).toString();
 
-  const detailsResponse = await fetch(detailsUrl);
+  const detailsResponse = await fetch(detailsUrl, {
+    signal: AbortSignal.timeout(12_000),
+  });
   if (!detailsResponse.ok) {
-    throw new Error(
-      `youtube video lookup failed with status ${detailsResponse.status}.`,
-    );
+    throw await youtubeResponseError(detailsResponse, "video lookup");
   }
 
   const embeddableVideoIds = await readEmbeddableVideoIds(detailsResponse);
+  return candidates.filter((candidate) =>
+    embeddableVideoIds.has(candidate.youtubeVideoId),
+  );
+}
+
+async function findYouTubeCandidates(
+  artist: string,
+  title: string,
+): Promise<YouTubeCandidate[]> {
+  const candidates = await searchYouTubeCandidates(`${artist} ${title}`);
   return rankCandidates(
-    candidates.filter((candidate) =>
-      embeddableVideoIds.has(candidate.youtubeVideoId),
-    ),
+    candidates.filter((candidate) => candidateMatchesRequest(candidate, artist, title)),
     artist,
     title,
   );
@@ -264,7 +430,19 @@ async function resolveTrack(
     .where(eq(youtubeTrackCache.cacheKey, cacheKey))
     .get();
 
-  if (cached) {
+  if (
+    cached &&
+    candidateMatchesRequest(
+      {
+        youtubeVideoId: cached.youtubeVideoId,
+        title: cached.displayTitle,
+        channelTitle: cached.channelTitle,
+        artworkUrl: cached.artworkUrl ?? undefined,
+      },
+      artist,
+      title,
+    )
+  ) {
     return { source: "cache", track: toResolvedTrack(artist, cached) };
   }
 
@@ -275,7 +453,7 @@ async function resolveTrack(
   const candidates = await findYouTubeCandidates(artist, title);
   const candidate = candidates[0];
   if (!candidate) {
-    throw new Error("no embeddable, syndicated youtube result was found.");
+    throw new Error("no relevant, embeddable youtube result was found.");
   }
 
   database
@@ -341,6 +519,32 @@ app.get<{ Querystring: { artist?: string; title?: string } }>(
       request.log.error(error);
       const message = error instanceof Error ? error.message : "youtube resolution failed.";
       return reply.code(502).send({ error: "youtube_resolution_failed", message });
+    }
+  },
+);
+
+app.get<{ Querystring: { q?: string } }>(
+  "/api/youtube/search",
+  async (request, reply) => {
+    const query = request.query.q?.trim();
+    if (!query) {
+      return reply.code(400).send({ error: "query_required" });
+    }
+
+    if (!env.youtubeApiKey) {
+      return reply.code(503).send({
+        error: "youtube_not_configured",
+        message: "add youtube_api_key to apps/api/.env and restart the api.",
+      });
+    }
+
+    try {
+      const candidates = await searchYouTubeCandidates(query, 12);
+      return { tracks: candidates.map(candidateToResolvedTrack) };
+    } catch (error) {
+      request.log.error(error);
+      const message = error instanceof Error ? error.message : "youtube search failed.";
+      return reply.code(502).send({ error: "youtube_search_failed", message });
     }
   },
 );

@@ -1,9 +1,15 @@
-import type { PlaybackTrack } from "@soundspace/shared";
+import type {
+  PlaybackTrack,
+  VisualState,
+  WeatherProfile,
+} from "@soundspace/shared";
+import { blendVisualStates } from "@soundspace/shared";
 import {
   type FormEvent,
   type ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -11,12 +17,24 @@ import {
   useYouTubePlayer,
 } from "./useYouTubePlayer";
 import { AMBIENT_VISUAL_STATE } from "./atmosphere/ambient";
-import { sampleMelancholyVisualState } from "./atmosphere/melancholy";
-import { SoundspaceWorld } from "./world/SoundspaceWorld";
+import { createSongWeatherProgram } from "./atmosphere/weather-engine";
+import {
+  SoundspaceWorld,
+  type PerformanceSample,
+} from "./world/SoundspaceWorld";
+import { SoundspaceOrb } from "./world/SoundspaceOrb";
+import type { VisualQuality } from "./world/WeatherSystem";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 const DEFAULT_ARTIST = "driveways";
 const DEFAULT_TITLE = "melancholy";
+const DEFAULT_TRACK: PlaybackTrack = {
+  id: "default-driveways-melancholy",
+  uri: "soundspace:default:driveways-melancholy",
+  title: DEFAULT_TITLE,
+  artists: [DEFAULT_ARTIST],
+  album: "melancholy",
+};
 
 type ResolveSource = "cache" | "youtube";
 
@@ -28,6 +46,10 @@ type ResolveResponse = {
 type ResolvePayload = {
   source: ResolveSource | string;
   track: YouTubeResolvedTrack;
+};
+
+type SearchPayload = {
+  tracks?: YouTubeResolvedTrack[];
 };
 
 type ApiErrorPayload = {
@@ -44,13 +66,28 @@ function decodeResolveResponse(response: ResolvePayload): ResolveResponse {
 async function resolveTrack(artist: string, title: string): Promise<ResolveResponse> {
   const params = new URLSearchParams({ artist, title });
   const response = await fetch(`${API_BASE}/youtube/resolve?${params}`, {
-    credentials: "include",
+    signal: AbortSignal.timeout(12_000),
   });
   if (!response.ok) {
     const payload: ApiErrorPayload = await response.json().catch(() => ({}));
     throw new Error(payload.message || `track unavailable (${response.status})`);
   }
   return decodeResolveResponse(await response.json());
+}
+
+async function searchYouTube(query: string): Promise<YouTubeResolvedTrack[]> {
+  const params = new URLSearchParams({ q: query });
+  const response = await fetch(`${API_BASE}/youtube/search?${params}`, {
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    const payload: ApiErrorPayload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `search unavailable (${response.status})`);
+  }
+
+  // SAFETY: This repo owns the search endpoint. The optional array guard rejects a missing collection.
+  const payload = await response.json() as SearchPayload | null;
+  return Array.isArray(payload?.tracks) ? payload.tracks : [];
 }
 
 function formatTime(milliseconds: number): string {
@@ -87,29 +124,72 @@ function IconButton({
   );
 }
 
-function TrackArtwork({ track }: { track: PlaybackTrack | null }) {
-  if (track?.artworkUrl) {
-    return <img alt="" className="artwork-image" src={track.artworkUrl} />;
-  }
+function TrackArtwork({
+  active,
+  disabled,
+  onEnter,
+  profile,
+  track,
+  visualState,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onEnter(): void;
+  profile: WeatherProfile;
+  track: PlaybackTrack | null;
+  visualState: VisualState;
+}) {
+  const [inviting, setInviting] = useState(false);
 
   return (
-    <div aria-hidden="true" className="artwork-placeholder">
-      <span>s</span>
-    </div>
+    <button
+      aria-label={active ? "soundspace entered" : `enter ${track?.title ?? "soundspace"}`}
+      aria-disabled={active}
+      className="artwork-orb-control"
+      data-active={active}
+      disabled={disabled}
+      onBlur={() => setInviting(false)}
+      onClick={active ? undefined : onEnter}
+      onFocus={() => setInviting(true)}
+      onPointerEnter={() => setInviting(true)}
+      onPointerLeave={() => setInviting(false)}
+      tabIndex={active ? -1 : undefined}
+      type="button"
+    >
+      <SoundspaceOrb
+        active={active || inviting}
+        profile={profile}
+        title={track?.title ?? "soundspace"}
+        visualState={visualState}
+      />
+      <span>{active ? "inside" : disabled ? "forming" : "enter ↗"}</span>
+    </button>
   );
 }
 
 export default function App() {
-  const [artist, setArtist] = useState(DEFAULT_ARTIST);
-  const [title, setTitle] = useState(DEFAULT_TITLE);
+  const [searchQuery, setSearchQuery] = useState(
+    `${DEFAULT_ARTIST} ${DEFAULT_TITLE}`,
+  );
+  const [searchResults, setSearchResults] = useState<YouTubeResolvedTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<YouTubeResolvedTrack | null>(
     null,
   );
+  const [entered, setEntered] = useState(false);
+  const [entryTransition, setEntryTransition] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [resolving, setResolving] = useState(false);
+  const [pendingAutoplayTrackId, setPendingAutoplayTrackId] = useState<string | null>(
+    null,
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [seekDraft, setSeekDraft] = useState<number | null>(null);
   const [volume, setVolume] = useState(0.72);
+  const [visualQuality, setVisualQuality] = useState<VisualQuality>("max");
+  const [performanceSample, setPerformanceSample] = useState<PerformanceSample | null>(null);
+  const searchPanelRef = useRef<HTMLElement>(null);
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const player = useYouTubePlayer();
   const visibleTrack = player.playbackState.track ?? selectedTrack;
   const playerReady = player.phase === "ready";
@@ -117,17 +197,28 @@ export default function App() {
   const playbackProgress = player.playbackState.durationMs
     ? player.playbackState.positionMs / player.playbackState.durationMs
     : 0;
-  const visualState = useMemo(() => {
-    if (!player.playbackState.track) return AMBIENT_VISUAL_STATE;
-    return sampleMelancholyVisualState(playbackProgress);
-  }, [playbackProgress, player.playbackState.track]);
-
-  const playerStatus = useMemo(() => {
-    if (player.phase === "ready") return "ready";
-    if (player.phase === "error") return "error";
-    if (player.phase === "loading-api") return "loading";
-    return "idle";
-  }, [player.phase]);
+  const weatherProgram = useMemo(
+    () => createSongWeatherProgram(visibleTrack ?? DEFAULT_TRACK),
+    [visibleTrack?.album, visibleTrack?.artists, visibleTrack?.id, visibleTrack?.title],
+  );
+  const liveWeatherStructure = useMemo(
+    () => weatherProgram.live(playbackProgress),
+    [playbackProgress, weatherProgram],
+  );
+  const weatherStructure = entered
+    ? liveWeatherStructure
+    : weatherProgram.pregame;
+  const entryBlend = entryTransition <= 0.32
+    ? 0
+    : 1 - Math.pow(1 - (entryTransition - 0.32) / 0.68, 3);
+  const worldVisualState = entered
+      ? blendVisualStates(
+        weatherProgram.pregame.visualState,
+        liveWeatherStructure.visualState,
+        entryBlend,
+      )
+    : AMBIENT_VISUAL_STATE;
+  const worldProfile = weatherProgram.pregame.profile;
 
   const chooseTrack = async (
     nextArtist: string,
@@ -144,7 +235,10 @@ export default function App() {
     try {
       const result = await resolveTrack(nextArtist.trim(), nextTitle.trim());
       setSelectedTrack(result.track);
-      if (shouldPlay) await player.selectTrack(result.track);
+      if (shouldPlay) {
+        await player.selectTrack(result.track);
+        await player.provider.play();
+      }
       setSearchOpen(false);
     } catch (cause: unknown) {
       setNotice(cause instanceof Error ? cause.message : "track unavailable");
@@ -157,9 +251,112 @@ export default function App() {
     void chooseTrack(DEFAULT_ARTIST, DEFAULT_TITLE, false);
   }, []);
 
+  useEffect(() => {
+    if (!searchOpen) return;
+    const handleSearchKeys = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSearchOpen(false);
+        requestAnimationFrame(() => searchTriggerRef.current?.focus());
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const controls = searchPanelRef.current?.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled)",
+      );
+      if (!controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleSearchKeys);
+    return () => window.removeEventListener("keydown", handleSearchKeys);
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (!entered) return;
+    const startedAt = performance.now();
+    let frameId = 0;
+    const updateEntryTransition = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / 2_800);
+      setEntryTransition(progress);
+      if (progress < 1) frameId = requestAnimationFrame(updateEntryTransition);
+    };
+    frameId = requestAnimationFrame(updateEntryTransition);
+    return () => cancelAnimationFrame(frameId);
+  }, [entered]);
+
+  useEffect(() => {
+    if (!playerReady || !selectedTrack) return;
+    const syncSelection = async () => {
+      if (player.playbackState.track?.id !== selectedTrack.id) {
+        await player.selectTrack(selectedTrack);
+      }
+      if (pendingAutoplayTrackId === selectedTrack.id) {
+        setPendingAutoplayTrackId(null);
+        await player.provider.play();
+      }
+    };
+
+    void syncSelection().catch((cause: Error) => setNotice(cause.message));
+  }, [
+    pendingAutoplayTrackId,
+    player.playbackState.track?.id,
+    player.provider,
+    player.selectTrack,
+    playerReady,
+    selectedTrack,
+  ]);
+
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void chooseTrack(artist, title, true);
+    const query = searchQuery.trim();
+    if (!query) {
+      setNotice("type an artist, a title, or both");
+      return;
+    }
+
+    setSearching(true);
+    setNotice(null);
+    void searchYouTube(query)
+      .then((tracks) => {
+        setSearchResults(tracks);
+        if (tracks.length === 0) setNotice("no playable weather found");
+      })
+      .catch((cause: unknown) => {
+        setNotice(cause instanceof Error ? cause.message : "search unavailable");
+      })
+      .finally(() => setSearching(false));
+  };
+
+  const chooseSearchResult = async (track: YouTubeResolvedTrack) => {
+    setResolving(true);
+    setNotice(null);
+    setEntered(false);
+    setEntryTransition(0);
+
+    try {
+      if (playerReady) {
+        await player.selectTrack(track);
+      } else {
+        setPendingAutoplayTrackId(track.id);
+      }
+      setSelectedTrack(track);
+      if (playerReady) {
+        await player.provider.play();
+      }
+      setSearchOpen(false);
+    } catch (cause: unknown) {
+      setNotice(cause instanceof Error ? cause.message : "track unavailable");
+    } finally {
+      setResolving(false);
+    }
   };
 
   const togglePlayback = async () => {
@@ -174,6 +371,32 @@ export default function App() {
       }
     } catch (cause: unknown) {
       setNotice(cause instanceof Error ? cause.message : "click play to start");
+    }
+  };
+
+  const enterWorld = async () => {
+    if (!selectedTrack) {
+      setNotice("the soundspace is still forming");
+      return;
+    }
+
+    setEntryTransition(0);
+    setEntered(true);
+
+    if (!playerReady) {
+      setPendingAutoplayTrackId(selectedTrack.id);
+      setNotice("youtube is still arriving — the weather can form without it");
+      return;
+    }
+
+    try {
+      if (player.playbackState.track?.id !== selectedTrack.id) {
+        await player.selectTrack(selectedTrack);
+      }
+      await player.provider.play();
+      setNotice(null);
+    } catch (cause: unknown) {
+      setNotice(cause instanceof Error ? cause.message : "click the orb again");
     }
   };
 
@@ -193,19 +416,31 @@ export default function App() {
   };
 
   return (
-    <main className="player-shell" data-playing={player.playbackState.isPlaying}>
-      <SoundspaceWorld visualState={visualState} />
-      <div className="player-atmosphere" aria-hidden="true">
-        <div className="field-line field-line--outer" />
-        <div className="field-line field-line--middle" />
-        <div className="field-line field-line--inner" />
-      </div>
+    <main
+      className="player-shell"
+      data-entry-progress={entryTransition.toFixed(3)}
+      data-entered={entered}
+      data-playback-progress={playbackProgress.toFixed(3)}
+      data-weather-primary={weatherStructure.profile.primaryPhenomenon}
+      data-weather-seed={weatherStructure.profile.seed}
+      data-weather-stage={weatherStructure.kind}
+      data-weather-confidence={weatherProgram.classification.confidence.toFixed(3)}
+      data-visual-quality={visualQuality}
+    >
+      <SoundspaceWorld
+        entryProgress={entryTransition}
+        entryVisualState={weatherProgram.pregame.visualState}
+        expanded={entered}
+        onPerformanceSample={setPerformanceSample}
+        profile={worldProfile}
+        quality={visualQuality}
+        visualState={worldVisualState}
+      />
 
       <header className="topbar">
         <p className="wordmark">soundspace</p>
         <div className="session-controls">
-          <span className="connection-state"><i />{playerStatus}</span>
-          <button className="text-button" onClick={() => setSearchOpen(true)} type="button">
+          <button className="text-button" onClick={() => setSearchOpen(true)} ref={searchTriggerRef} type="button">
             choose track
           </button>
         </div>
@@ -213,8 +448,14 @@ export default function App() {
 
       <section className="now-playing" aria-live="polite">
         <div className="artwork-frame">
-          <TrackArtwork track={visibleTrack} />
-          <span className="artwork-index">ss—001</span>
+          <TrackArtwork
+            active={entered}
+            disabled={!selectedTrack}
+            onEnter={() => void enterWorld()}
+            profile={weatherStructure.profile}
+            track={visibleTrack}
+            visualState={weatherStructure.visualState}
+          />
         </div>
         <div className="track-copy">
           <h1>{visibleTrack?.title ?? "melancholy"}</h1>
@@ -251,6 +492,7 @@ export default function App() {
             <span aria-hidden="true">vol</span>
             <input
               aria-label="volume"
+              disabled={!playerReady}
               max="1"
               min="0"
               onChange={(event) => updateVolume(Number(event.target.value))}
@@ -282,6 +524,30 @@ export default function App() {
         </div>
       </section>
 
+      <aside className="visual-budget" aria-label="visual budget probe">
+        <div className="visual-budget__header">
+          <span>weather / {weatherProgram.classification.primary}</span>
+          <strong>{performanceSample ? `${Math.round(performanceSample.fps)} fps` : "sampling"}</strong>
+        </div>
+        <p>
+          {performanceSample
+            ? `${performanceSample.frameMs.toFixed(1)} ms · ${performanceSample.calls} calls · ${performanceSample.triangles.toLocaleString()} tris · ${performanceSample.points.toLocaleString()} pts`
+            : `${weatherProgram.classification.rationale} · render probe forming`}
+        </p>
+        <div className="visual-budget__tiers" aria-label="weather render density">
+          {(["low", "balanced", "max"] as const).map((quality) => (
+            <button
+              aria-pressed={visualQuality === quality}
+              key={quality}
+              onClick={() => setVisualQuality(quality)}
+              type="button"
+            >
+              {quality}
+            </button>
+          ))}
+        </div>
+      </aside>
+
       {player.error || notice ? (
         <aside className="runtime-notice" role="status">
           <p>{player.error ?? notice}</p>
@@ -289,34 +555,67 @@ export default function App() {
       ) : null}
 
       {searchOpen ? (
-        <section aria-label="choose youtube track" className="search-panel">
-          <div className="search-header">
-            <h2>find</h2>
-            <button aria-label="close track search" className="close-button" onClick={() => setSearchOpen(false)} type="button">×</button>
+        <section
+          aria-label="choose youtube track"
+          aria-modal="true"
+          className="search-panel"
+          ref={searchPanelRef}
+          role="dialog"
+        >
+          <div className="search-sheet">
+            <div className="search-header">
+              <div>
+                <p>another forecast / youtube</p>
+                <h2>find a<br /><i>sound</i></h2>
+              </div>
+              <button aria-label="close track search" className="close-button" onClick={() => {
+                setSearchOpen(false);
+                requestAnimationFrame(() => searchTriggerRef.current?.focus());
+              }} type="button">×</button>
+            </div>
+            <form aria-busy={searching} className="search-form" onSubmit={submitSearch}>
+              <label>
+                <span>artist, title, or whatever you remember</span>
+                <input
+                  aria-label="search youtube"
+                  autoFocus
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="baby ara velvet"
+                  value={searchQuery}
+                />
+              </label>
+              <button disabled={searching || resolving} type="submit">
+                {searching ? "listening…" : "search ↗"}
+              </button>
+            </form>
+
+            <div aria-live="polite" className="search-results">
+              {searching ? <p className="search-state">pulling sound through the weather…</p> : null}
+              {!searching && searchResults.length === 0 ? (
+                <p className="search-state">search for a song, then choose the version that should become a world.</p>
+              ) : null}
+              {searchResults.map((track, index) => (
+                <button
+                  className="search-result"
+                  disabled={resolving}
+                  key={track.id}
+                  onClick={() => void chooseSearchResult(track)}
+                  type="button"
+                >
+                  {track.artworkUrl ? (
+                    <img alt="" src={track.artworkUrl} />
+                  ) : (
+                    <span aria-hidden="true" className="result-placeholder" />
+                  )}
+                  <span>
+                    <strong>{track.title}</strong>
+                    <small>{track.artists.join(", ")}</small>
+                  </span>
+                  <i>{String(index + 1).padStart(2, "0")} / play</i>
+                </button>
+              ))}
+            </div>
           </div>
-          <form className="search-form" onSubmit={submitSearch}>
-            <label>
-              <span>artist</span>
-              <input
-                aria-label="artist"
-                onChange={(event) => setArtist(event.target.value)}
-                placeholder="artist"
-                value={artist}
-              />
-            </label>
-            <label>
-              <span>title</span>
-              <input
-                aria-label="track title"
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="title"
-                value={title}
-              />
-            </label>
-            <button disabled={resolving} type="submit">
-              {resolving ? "resolving" : "play"}
-            </button>
-          </form>
         </section>
       ) : null}
     </main>

@@ -10,11 +10,15 @@
   "scripts": {
     "build": "npm run build -w @soundspace/shared && npm run build -w @soundspace/api && npm run build -w @soundspace/web",
     "dev": "npm run build -w @soundspace/shared && concurrently -k -n api,web -c magenta,cyan \"npm run dev -w @soundspace/api\" \"npm run dev -w @soundspace/web\"",
+    "corpus:spotify": "node e2e/tools/import-spotify-corpus.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:songs": "playwright test e2e/song-journey.spec.ts",
     "lint": "oxlint .",
-    "typecheck": "npm run build -w @soundspace/shared && npm run typecheck -w @soundspace/api && npm run typecheck -w @soundspace/web"
+    "typecheck": "npm run build -w @soundspace/shared && npm run typecheck -w @soundspace/api && npm run typecheck -w @soundspace/web && tsc -p tsconfig.e2e.json --noEmit"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
+    "@playwright/test": "^1.62.1",
     "concurrently": "^10.0.5",
     "oxlint": "1.80.0",
     "typescript": "^7.0.2"

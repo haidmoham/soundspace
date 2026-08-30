@@ -1,8 +1,28 @@
 import {
   EMPTY_AUDIO_FEATURES,
   composeVisualState,
+  defineWeatherProfile,
   type VisualState,
 } from "@soundspace/shared";
+import { weatherPalette, weatherRelationship } from "./grammar";
+
+export const AMBIENT_WEATHER_PROFILE = defineWeatherProfile({
+  id: "ambient-room",
+  seed: 2_041,
+  palette: weatherPalette("snow"),
+  layers: {
+    skyTexture: 0.5,
+    vibrance: 0.52,
+    cloudDensity: 0.46,
+    cloudDepth: 0.48,
+    mistDensity: 0.58,
+    precipitationDensity: 0,
+    particleDensity: 0.42,
+    electricityFrequency: 0,
+    turbulence: 0.18,
+  },
+  relationships: [weatherRelationship("snow", 1)],
+});
 
 export const AMBIENT_VISUAL_STATE: VisualState = composeVisualState({
   climate: {

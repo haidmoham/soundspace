@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://soundspace.local/schemas/song-corpus.schema.json",
+  "title": "Sanitized Soundspace song corpus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "tracks"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "query", "playerAuthor", "track"],
+        "properties": {
+          "caseId": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9-]+$" },
+          "query": { "type": "string", "minLength": 1 },
+          "playerAuthor": { "type": "string", "minLength": 1 },
+          "track": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "uri", "title", "artists", "album", "provider", "youtubeVideoId"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "uri": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "artists": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "album": { "type": "string" },
+              "artworkUrl": { "type": "string", "format": "uri" },
+              "provider": { "const": "youtube" },
+              "youtubeVideoId": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

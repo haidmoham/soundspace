@@ -21,6 +21,28 @@ sets the baseline, semantics decides what can appear, and audio features only
 change how those things move. youtube does not expose pcm here, so the audio
 feature contract stays neutral for now.
 
+each soundspace has one seeded weather profile. the profile owns its palette
+and layer tuning. the pregame orb and live room project the same profile at
+different scales. the live renderer keeps sky, clouds, mist, precipitation,
+airborne matter, and electricity as separate layers.
+
+weather assignment is fuzzy but sharp. rain, sun, snow, and future phenomena
+form an open spanning set whose memberships sum to one. every song profile
+must have a dominant phenomenon with at least `0.6` membership. the grammar
+maps that phenomenon to color and behavior: rain becomes tumult, sun becomes
+bright and energetic, and snow becomes somber and calm.
+
+the current prototype assigns exactly one primary weather from track metadata.
+weather words win when the title supplies a clear signal. a stable metadata
+hash assigns tracks without a clear signal. this classifier is a visual test
+fixture, not a claim about musical meaning. `weather-engine.ts` owns the
+extensible presets and their separate pregame and live timelines.
+
+the visual budget probe starts at `max`. it reports world-canvas fps, frame
+time, draw calls, triangles, and points. use `balanced` and `low` to compare
+the cost of pixel density and layer density without changing the weather or
+song. headless browser fps is useful for relative comparison only.
+
 ## setup
 
 you need node 22+ and a youtube data api v3 key.
@@ -61,9 +83,12 @@ the api:
 
 1. normalizes artist + title into a cache key.
 2. checks sqlite first.
-3. searches for `artist title official audio` on a miss.
-4. filters for syndicated, embeddable videos and confirms embed status.
-5. ranks the remaining results and caches the winner.
+3. searches for `artist title` on a miss.
+4. filters for results whose title matches the song and whose title or channel
+   matches the artist.
+5. confirms embed status, then ranks artist topic channels and exact song
+   titles first.
+6. caches the winner.
 
 the response says whether it came from `cache` or `youtube`.
 
