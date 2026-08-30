@@ -22,6 +22,11 @@ type YouTubePlayerController = {
   selectTrack(track: YouTubeResolvedTrack): Promise<void>;
 };
 
+type PendingSelection = {
+  reject(error: Error): void;
+  videoId: string;
+};
+
 let iframeApiPromise: Promise<YouTubePlayerConstructor> | undefined;
 
 function loadIframeApi(): Promise<YouTubePlayerConstructor> {
@@ -103,6 +108,7 @@ function errorForPlayerCode(code: YouTubePlayerErrorEvent["data"]): string {
 export function useYouTubePlayer(): YouTubePlayerController {
   const playerRef = useRef<YouTubePlayer | null>(null);
   const selectedTrackRef = useRef<YouTubeResolvedTrack | null>(null);
+  const pendingSelectionRef = useRef<PendingSelection | null>(null);
   const stateRef = useRef<PlaybackState>(EMPTY_PLAYBACK_STATE);
   const [playerHost, setPlayerHost] = useState<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<PlayerPhase>("idle");
@@ -123,6 +129,9 @@ export function useYouTubePlayer(): YouTubePlayerController {
     const videoData = player.getVideoData();
     const videoMatchesSelection =
       videoData?.video_id === selectedTrack.youtubeVideoId;
+    // Keep the previous committed playback state until the iframe confirms the
+    // requested video. This prevents new metadata from appearing over an old video.
+    if (!videoMatchesSelection) return;
     const durationSeconds = videoMatchesSelection ? player.getDuration() : 0;
     const positionSeconds = videoMatchesSelection ? player.getCurrentTime() : 0;
     const isPlaying = videoMatchesSelection && player.getPlayerState() === 1;
@@ -179,7 +188,10 @@ export function useYouTubePlayer(): YouTubePlayerController {
               setError("press play again");
             },
             onError: (event) => {
-              setError(errorForPlayerCode(event.data));
+              const message = errorForPlayerCode(event.data);
+              setError(message);
+              pendingSelectionRef.current?.reject(new Error(message));
+              pendingSelectionRef.current = null;
               sampleState();
             },
             onReady: (event) => {
@@ -208,6 +220,8 @@ export function useYouTubePlayer(): YouTubePlayerController {
       if (playerRef.current === player) playerRef.current = null;
       stateRef.current = EMPTY_PLAYBACK_STATE;
       setPlaybackState(EMPTY_PLAYBACK_STATE);
+      pendingSelectionRef.current?.reject(new Error("youtube player closed"));
+      pendingSelectionRef.current = null;
     };
   }, [playerHost, sampleState]);
 
@@ -259,19 +273,73 @@ export function useYouTubePlayer(): YouTubePlayerController {
   const selectTrack = useCallback(async (track: YouTubeResolvedTrack) => {
     const player = playerRef.current;
     if (!player) throw new Error("still loading");
+
+    pendingSelectionRef.current?.reject(new Error("track selection replaced"));
+    const previousTrack = selectedTrackRef.current;
+    const previousWasPlaying = player.getPlayerState() === 1;
     selectedTrackRef.current = track;
     setError(null);
-    const nextState: PlaybackState = {
-      trackId: track.youtubeVideoId,
-      track,
-      positionMs: 0,
-      durationMs: 0,
-      isPlaying: false,
-    };
-    stateRef.current = nextState;
-    setPlaybackState(nextState);
     player.cueVideoById(track.youtubeVideoId);
-  }, []);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now();
+        let timerId = 0;
+
+        const finish = (cause?: Error) => {
+          window.clearTimeout(timerId);
+          if (pendingSelectionRef.current?.videoId === track.youtubeVideoId) {
+            pendingSelectionRef.current = null;
+          }
+          if (cause) reject(cause);
+          else resolve();
+        };
+
+        const check = () => {
+          if (
+            playerRef.current !== player ||
+            selectedTrackRef.current?.youtubeVideoId !== track.youtubeVideoId
+          ) {
+            finish(new Error("track selection replaced"));
+            return;
+          }
+
+          const videoData = player.getVideoData();
+          const duration = player.getDuration();
+          if (videoData?.video_id === track.youtubeVideoId && duration > 0) {
+            sampleState();
+            finish();
+            return;
+          }
+
+          if (Date.now() - startedAt >= 8_000) {
+            finish(new Error("youtube took too long to change songs"));
+            return;
+          }
+
+          timerId = window.setTimeout(check, 50);
+        };
+
+        pendingSelectionRef.current = {
+          reject: (error) => finish(error),
+          videoId: track.youtubeVideoId,
+        };
+        check();
+      });
+    } catch (cause: unknown) {
+      // Roll the iframe and the committed state back together when a candidate
+      // fails. A failed search result must not strand the old UI over a new video.
+      if (selectedTrackRef.current?.youtubeVideoId === track.youtubeVideoId) {
+        selectedTrackRef.current = previousTrack;
+        if (previousTrack) {
+          player.cueVideoById(previousTrack.youtubeVideoId);
+          if (previousWasPlaying) player.playVideo();
+        }
+        sampleState();
+      }
+      throw cause;
+    }
+  }, [sampleState]);
 
   return {
     error,

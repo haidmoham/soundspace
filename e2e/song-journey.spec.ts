@@ -61,7 +61,8 @@ test.describe("song journeys", () => {
       await expect(page.locator(".now-playing h1")).toHaveText(songCase.track.title.toLowerCase());
       await expect(page.locator(".artist-line")).toHaveText(songCase.track.artists.join(", ").replace(/ - Topic$/, "").toLowerCase());
       await expect(page.locator("main.player-shell")).toHaveCount(1);
-      await expect(page.locator(".youtube-player-host")).toHaveCount(1);
+      await expect(page.locator(".youtube-player-host"))
+        .toHaveAttribute("data-track-id", songCase.track.youtubeVideoId);
       await expect(page.getByRole("complementary", { name: "visual budget probe" })).toBeVisible();
       await expect(page.getByText("forming", { exact: true })).toHaveCount(0);
 
@@ -82,6 +83,7 @@ test.describe("song journeys", () => {
         await exitControl.click();
         await expect(shell).toHaveAttribute("data-entered", "false");
         await expect(shell).toHaveAttribute("data-weather-stage", "pregame");
+        await expect(page.getByRole("button", { name: "pause" })).toBeVisible();
       }
 
       expect(consoleErrors).toEqual([]);

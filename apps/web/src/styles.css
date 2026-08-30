@@ -1267,6 +1267,27 @@ input[type="range"] { accent-color: var(--amber); }
   transition: transform 150ms var(--ease-out), opacity 150ms ease, background-color 150ms ease;
 }
 
+.search-result[data-embed-status="blocked"] {
+  color: #776c73;
+  background: rgb(42 23 38 / 5%);
+  cursor: not-allowed;
+  filter: grayscale(1);
+  opacity: 0.42;
+}
+
+.search-result[data-embed-status="blocked"] .weather-glyph {
+  animation: none;
+  box-shadow: none;
+}
+
+.search-result[data-embed-status="blocked"] img {
+  filter: grayscale(1) contrast(0.8);
+}
+
+.search-result[data-embed-status="blocked"] i {
+  color: currentColor;
+}
+
 .weather-glyph {
   display: grid;
   width: 34px;
@@ -1385,8 +1406,8 @@ input[type="range"] { accent-color: var(--amber); }
   }
 
   .transport-button--primary:hover:not(:disabled) { background: #fff3e1; }
-  .search-result:hover { background: rgb(242 229 212 / 8%); opacity: 0.94; transform: translateX(5px); }
-  .search-sheet--landing .search-result:hover { background: rgb(242 229 212 / 12%); }
+  .search-result:hover:not(:disabled) { background: rgb(242 229 212 / 8%); opacity: 0.94; transform: translateX(5px); }
+  .search-sheet--landing .search-result:hover:not(:disabled) { background: rgb(242 229 212 / 12%); }
 }
 
 @media (max-width: 740px) {

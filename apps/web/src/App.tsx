@@ -149,6 +149,12 @@ function TrackArtwork({
   );
 }
 
+function isCandidatePlaybackFailure(cause: unknown): cause is Error {
+  if (!(cause instanceof Error)) return false;
+  return /embedded|rejected|won't play|video is gone|verify this player|too long to change songs/i
+    .test(cause.message);
+}
+
 function WeatherCrest() {
   return (
     <span aria-label="sun forecast" className="weather-crest weather-crest--sun" role="img">
@@ -221,10 +227,12 @@ function TrackSearch({
         ) : null}
         {results.map((track, index) => {
           const weather = createSongWeatherProgram(track).classification.primary;
+          const embeddingBlocked = track.embeddable === false;
           return (
             <button
               className="search-result"
-              disabled={resolving}
+              data-embed-status={embeddingBlocked ? "blocked" : "allowed"}
+              disabled={resolving || embeddingBlocked}
               key={track.id}
               onClick={() => onChoose(track)}
               type="button"
@@ -239,7 +247,9 @@ function TrackSearch({
                 <strong>{displayCopy(track.title)}</strong>
                 <small>{displayCopy(track.artists.join(", "))}</small>
               </span>
-              <i>{String(index + 1).padStart(2, "0")} / open</i>
+              <i>
+                {String(index + 1).padStart(2, "0")} / {embeddingBlocked ? "embedding off" : "open"}
+              </i>
             </button>
           );
         })}
@@ -292,6 +302,7 @@ export default function App() {
   const [visualQuality, setVisualQuality] = useState<VisualQuality>("max");
   const [weatherOverride, setWeatherOverride] = useState<WeatherKind | null>(null);
   const [performanceSample, setPerformanceSample] = useState<PerformanceSample | null>(null);
+  const searchRequestIdRef = useRef(0);
   const searchPanelRef = useRef<HTMLElement>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const player = useYouTubePlayer();
@@ -415,36 +426,62 @@ export default function App() {
       return;
     }
 
+    const requestId = ++searchRequestIdRef.current;
     setSearching(true);
     setNotice(null);
     void searchYouTube(query)
       .then((tracks) => {
+        if (requestId !== searchRequestIdRef.current) return;
         setSearchResults(tracks);
         if (tracks.length === 0) setNotice("no playable weather found");
       })
       .catch((cause: unknown) => {
+        if (requestId !== searchRequestIdRef.current) return;
         setNotice(cause instanceof Error ? cause.message : "search unavailable");
       })
-      .finally(() => setSearching(false));
+      .finally(() => {
+        if (requestId === searchRequestIdRef.current) setSearching(false);
+      });
+  };
+
+  const changeSearchQuery = (value: string) => {
+    // Invalidate an in-flight response as soon as its visible query changes.
+    // Search text and result rows must always describe the same request.
+    searchRequestIdRef.current += 1;
+    setSearchQuery(value);
+    setSearchResults([]);
+    setSearching(false);
+    setNotice(null);
   };
 
   const chooseSearchResult = async (track: YouTubeResolvedTrack) => {
     setResolving(true);
     setNotice(null);
-    setEntered(false);
-    setEntryTransition(0);
 
     try {
-      if (playerReady) {
-        await player.selectTrack(track);
-      } else {
-        setPendingAutoplayTrackId(track.id);
+      if (!playerReady) {
+        throw new Error("youtube is still arriving — try this song again");
       }
+
+      // The player waits for the iframe to confirm both the video id and its
+      // duration. Commit every visible song state only after that boundary.
+      await player.selectTrack(track);
       setSelectedTrack(track);
+      setEntered(false);
+      setEntryTransition(0);
+      setSeekDraft(null);
+      setPendingAutoplayTrackId(null);
       setWeatherOverride(null);
       setSearchOpen(false);
       requestAnimationFrame(() => window.scrollTo(0, 0));
     } catch (cause: unknown) {
+      if (isCandidatePlaybackFailure(cause)) {
+        setSearchResults((current) => current.map((candidate) =>
+          candidate.id === track.id
+            ? { ...candidate, embeddable: false }
+            : candidate,
+        ));
+      }
       setNotice(cause instanceof Error ? cause.message : "track unavailable");
     } finally {
       setResolving(false);
@@ -492,16 +529,10 @@ export default function App() {
     }
   };
 
-  const exitWorld = async () => {
+  const exitWorld = () => {
     setEntered(false);
     setEntryTransition(0);
     setNotice(null);
-    if (!player.playbackState.isPlaying) return;
-    try {
-      await player.provider.pause();
-    } catch (cause: unknown) {
-      setNotice(cause instanceof Error ? cause.message : "the player is still settling");
-    }
   };
 
   const commitSeek = (positionMs: number) => {
@@ -578,7 +609,7 @@ export default function App() {
           <TrackSearch
             landing
             onChoose={(track) => void chooseSearchResult(track)}
-            onQueryChange={setSearchQuery}
+            onQueryChange={changeSearchQuery}
             onSubmit={submitSearch}
             query={searchQuery}
             resolving={resolving}
@@ -594,7 +625,7 @@ export default function App() {
             active={entered}
             disabled={!selectedTrack}
             onEnter={() => void enterWorld()}
-            onExit={() => void exitWorld()}
+            onExit={exitWorld}
             profile={weatherStructure.profile}
             track={visibleTrack}
             visualState={weatherStructure.visualState}
@@ -611,7 +642,11 @@ export default function App() {
 
       </>}
 
-      <div aria-label="youtube player" className={landing ? "youtube-player-host youtube-player-host--warming" : "youtube-player-host"}>
+      <div
+        aria-label="youtube player"
+        className={landing ? "youtube-player-host youtube-player-host--warming" : "youtube-player-host"}
+        data-track-id={player.playbackState.track?.id ?? ""}
+      >
         <div ref={player.playerHostRef} />
       </div>
 
@@ -718,7 +753,7 @@ export default function App() {
                 setSearchOpen(false);
                 requestAnimationFrame(() => searchTriggerRef.current?.focus());
             }}
-            onQueryChange={setSearchQuery}
+            onQueryChange={changeSearchQuery}
             onSubmit={submitSearch}
             query={searchQuery}
             resolving={resolving}
