@@ -241,19 +241,22 @@ function createSnowData(profile: WeatherProfile, quality: VisualQuality) {
   const random = createRandom(profile.seed + 401);
   const count = 100 + Math.round(700 * profile.layers.precipitationDensity * qualityDensity(quality));
   const positions = new Float32Array(count * 3);
+  const origins = new Float32Array(count * 3);
   const phases = new Float32Array(count);
   const sizes = new Float32Array(count);
   for (let index = 0; index < count; index += 1) {
     const offset = index * 3;
-    positions.set([
+    const point: [number, number, number] = [
       (random() - 0.5) * 18,
       (random() - 0.5) * 12,
       -2.4 + random() * 5.2,
-    ], offset);
+    ];
+    positions.set(point, offset);
+    origins.set(point, offset);
     phases[index] = random() * Math.PI * 2;
     sizes[index] = 0.5 + random() * 1.5;
   }
-  return { count, phases, positions, sizes };
+  return { count, origins, phases, positions, sizes };
 }
 
 function createSolarData(profile: WeatherProfile, quality: VisualQuality) {
@@ -604,6 +607,7 @@ function RainSheet({
   visualState,
 }: LayerProps & { near: boolean }) {
   const lines = useRef<LineSegments>(null);
+  const material = useRef<LineBasicMaterial>(null);
   const count = Math.round(
     ((near ? 220 : 300) +
       profile.layers.precipitationDensity * (near ? 520 : 700)) *
@@ -624,14 +628,36 @@ function RainSheet({
     visualState.semantics.precipitation *
     precipitation *
     (0.72 + forces.precipitationPressure * 0.42);
+  const rainfallVolume = clamp(
+    0.08 +
+      precipitation * 0.22 +
+      forces.precipitationPressure * 0.16 +
+      (forces.isPlaying
+        ? forces.energy * 0.28 + forces.pulse * 0.18 + forces.eventStrength * 0.16
+        : 0),
+  );
+  const rainfallVolumeRef = useRef(rainfallVolume);
 
   useFrame(({ clock }, delta) => {
     if (!lines.current || presence <= 0.01) return;
+    const frameDelta = Math.min(delta, 1 / 30);
+    const smoothing = 1 - Math.exp(-frameDelta * 3.2);
+    rainfallVolumeRef.current +=
+      (rainfallVolume - rainfallVolumeRef.current) * smoothing;
+    const activeCount = Math.max(1, Math.floor(count * rainfallVolumeRef.current));
+    lines.current.geometry.setDrawRange(0, activeCount * 2);
+    if (material.current) {
+      material.current.opacity =
+        presence *
+        (near ? 0.52 : 0.3) *
+        (0.72 + profile.layers.vibrance * 0.2) *
+        (0.7 + rainfallVolumeRef.current * 0.42);
+    }
     const motion = reducedMotion ? 0.22 : 1;
     const attribute = lines.current.geometry.getAttribute("position");
     const storm = visualState.weather.stormIntensity;
     const fall =
-      delta * motion *
+      frameDelta * motion *
       (near ? 6.8 : 4.4) *
       (0.8 + visualState.weather.wind * 1.2 + storm * 0.7 + forces.precipitationPressure * 0.45);
     const gust =
@@ -639,7 +665,7 @@ function RainSheet({
       (visualState.weather.wind + forces.gust + forces.viewportPressure) *
       (storm + forces.atmosphericMotion);
     const drift =
-      delta * motion *
+      frameDelta * motion *
       (visualState.weather.wind + gust + forces.atmosphericMotion * 0.7) *
       (near ? 4.6 : 2.5);
     for (let index = 0; index < count; index += 1) {
@@ -686,14 +712,11 @@ function RainSheet({
         />
       </bufferGeometry>
       <lineBasicMaterial
+        ref={material}
         blending={near ? AdditiveBlending : undefined}
         color={profile.palette.precipitation}
         depthWrite={false}
-        opacity={
-          presence *
-          (near ? 0.82 : 0.42) *
-          (0.82 + profile.layers.vibrance * 0.28)
-        }
+        opacity={presence * (near ? 0.52 : 0.3)}
         transparent
       />
     </lineSegments>
@@ -760,6 +783,7 @@ function PrecipitationField(props: LayerProps) {
 
 function SnowField({ profile, quality, reducedMotion, response, visualState }: LayerProps) {
   const points = useRef<Points>(null);
+  const gustRef = useRef(0);
   const data = useMemo(() => createSnowData(profile, quality), [profile, quality]);
   const membership = phenomenonMembership(profile, "snow");
   const presence =
@@ -770,20 +794,26 @@ function SnowField({ profile, quality, reducedMotion, response, visualState }: L
 
   useFrame(({ clock }, delta) => {
     if (!points.current || presence <= 0.01) return;
+    const frameDelta = Math.min(delta, 1 / 30);
     const motion = reducedMotion ? 0.28 : 1;
     const time = clock.elapsedTime * motion;
+    gustRef.current +=
+      (forces.gust - gustRef.current) * (1 - Math.exp(-frameDelta * 2.4));
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < data.count; index += 1) {
+      const offset = index * 3;
       const phase = data.phases[index]!;
       const weight = data.sizes[index]!;
-      let y = positions.getY(index) - delta * motion * (0.16 + weight * 0.32);
-      let x = positions.getX(index) +
-        Math.sin(time * (0.24 + weight * 0.08) + phase) * delta * motion *
-          (0.12 + visualState.weather.wind * 0.24 + forces.gust * 0.16);
+      let y = positions.getY(index) - frameDelta * motion * (0.16 + weight * 0.32);
+      const sway =
+        Math.sin(time * (0.24 + weight * 0.08) + phase) *
+        (0.18 + visualState.weather.wind * 0.18 + gustRef.current * 0.14);
+      const longDrift =
+        Math.sin(time * 0.09 + phase * 0.37) *
+        (visualState.weather.wind * 0.34 + gustRef.current * 0.2);
+      const x = data.origins[offset]! + sway + longDrift;
       // Re-enter above the visible field so every visible snowflake falls.
       if (y < -6.2) y = 7.6;
-      if (x > 9.2) x = -9.2;
-      if (x < -9.2) x = 9.2;
       positions.setXY(index, x, y);
     }
     positions.needsUpdate = true;

@@ -77,21 +77,26 @@ const fragmentShader = /* glsl */ `
   }
 `;
 
-const rainPositions = new Float32Array(
-  Array.from({ length: 70 }, (_, index) => [
-    ((index * 37) % 101) / 101 * 4.2 - 2.1,
-    ((index * 61) % 97) / 97 * 4.4 - 2.2,
-    1.25 + ((index * 17) % 19) / 80,
-  ]).flat(),
-);
+function createRainPreviewPositions() {
+  return new Float32Array(
+    Array.from({ length: 70 }, (_, index) => [
+      ((index * 37) % 101) / 101 * 4.2 - 2.1,
+      ((index * 61) % 97) / 97 * 4.4 - 2.2,
+      1.25 + ((index * 17) % 19) / 80,
+    ]).flat(),
+  );
+}
 
-const snowPositions = new Float32Array(
-  Array.from({ length: 150 }, (_, index) => [
-    ((index * 53) % 149) / 149 * 4.4 - 2.2,
-    ((index * 71) % 151) / 151 * 4.5 - 2.25,
-    1.2 + ((index * 23) % 31) / 90,
-  ]).flat(),
-);
+function createSnowPreviewData() {
+  const origins = new Float32Array(
+    Array.from({ length: 150 }, (_, index) => [
+      ((index * 53) % 149) / 149 * 4.4 - 2.2,
+      ((index * 71) % 151) / 151 * 4.5 - 2.25,
+      1.2 + ((index * 23) % 31) / 90,
+    ]).flat(),
+  );
+  return { origins, positions: origins.slice() };
+}
 
 const solarPositions = new Float32Array(
   Array.from({ length: 170 }, (_, index) => {
@@ -183,6 +188,7 @@ function RainPreview({
   visualState: VisualState;
 }) {
   const points = useRef<Points>(null);
+  const positionsData = useMemo(createRainPreviewPositions, [profile.seed]);
   const baseline = visualState.climate.baseline;
   const rainMembership = profile.relationships
     .filter((relationship) => relationship.phenomenon === "rain")
@@ -195,10 +201,11 @@ function RainPreview({
 
   useFrame((_, delta) => {
     if (!points.current || precipitation <= 0.01) return;
+    const frameDelta = Math.min(delta, 1 / 30);
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < positions.count; index += 1) {
-      let y = positions.getY(index) - delta * (0.7 + precipitation * 2.8);
-      let x = positions.getX(index) + delta * wind * 0.32;
+      let y = positions.getY(index) - frameDelta * (0.7 + precipitation * 2.8);
+      let x = positions.getX(index) + frameDelta * wind * 0.32;
       if (y < -2.2) y = 2.75;
       if (x > 2.2) x = -2.2;
       positions.setXY(index, x, y);
@@ -210,7 +217,7 @@ function RainPreview({
     <points ref={points} rotation={[0, 0, -wind * 0.16]}>
       <bufferGeometry>
         <bufferAttribute
-          args={[rainPositions, 3]}
+          args={[positionsData, 3]}
           attach="attributes-position"
           count={70}
           itemSize={3}
@@ -280,15 +287,19 @@ function SnowPreview({
   visualState: VisualState;
 }) {
   const points = useRef<Points>(null);
+  const data = useMemo(createSnowPreviewData, [profile.seed]);
   const membership = profile.primaryPhenomenon === "snow" ? 1 : 0;
   const presence = membership * visualState.weather.precipitation;
 
   useFrame(({ clock }, delta) => {
     if (!points.current || presence <= 0.01) return;
+    const frameDelta = Math.min(delta, 1 / 30);
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < positions.count; index += 1) {
-      let y = positions.getY(index) - delta * (0.16 + (index % 7) * 0.035);
-      const x = positions.getX(index) + Math.sin(clock.elapsedTime * 0.3 + index) * delta * 0.06;
+      let y = positions.getY(index) - frameDelta * (0.16 + (index % 7) * 0.035);
+      const x =
+        data.origins[index * 3]! +
+        Math.sin(clock.elapsedTime * (0.22 + (index % 7) * 0.012) + index) * 0.1;
       if (y < -2.25) y = 2.8;
       positions.setXY(index, x, y);
     }
@@ -298,7 +309,7 @@ function SnowPreview({
   return (
     <points position={[0, 0, 0.03]} ref={points} visible={presence > 0.01}>
       <bufferGeometry>
-        <bufferAttribute args={[snowPositions, 3]} attach="attributes-position" count={150} itemSize={3} />
+        <bufferAttribute args={[data.positions, 3]} attach="attributes-position" count={150} itemSize={3} />
       </bufferGeometry>
       <pointsMaterial
         blending={AdditiveBlending}
