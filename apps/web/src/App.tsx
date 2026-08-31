@@ -41,6 +41,12 @@ const DEFAULT_TRACK: PlaybackTrack = {
   album: "melancholy",
 };
 
+const LIVE_WEATHER_EXPRESSION = {
+  rain: "thunderstorm",
+  snow: "blizzard",
+  sun: "scorching heat",
+} as const satisfies Record<WeatherKind, string>;
+
 type SearchPayload = {
   tracks?: YouTubeResolvedTrack[];
 };
@@ -109,18 +115,18 @@ function TrackArtwork({
   track,
   visualState,
   weather,
+  playing,
 }: {
   active: boolean;
   disabled: boolean;
   onEnter(): void;
   onExit(): void;
   profile: WeatherProfile;
+  playing: boolean;
   track: PlaybackTrack | null;
   visualState: VisualState;
   weather: WeatherKind;
 }) {
-  const [inviting, setInviting] = useState(false);
-
   return (
     <>
       {weather === "sun" ? <WeatherCrest /> : null}
@@ -128,17 +134,14 @@ function TrackArtwork({
         aria-label={active ? `exit ${displayCopy(track?.title ?? "soundspace")}` : `enter ${displayCopy(track?.title ?? "soundspace")}`}
         className="artwork-orb-control"
         data-active={active}
+        data-playing={playing}
         data-weather={weather}
         disabled={disabled}
-        onBlur={() => setInviting(false)}
         onClick={active ? onExit : onEnter}
-        onFocus={() => setInviting(true)}
-        onPointerEnter={() => setInviting(true)}
-        onPointerLeave={() => setInviting(false)}
         type="button"
       >
         <SoundspaceOrb
-          active={active || inviting}
+          active={playing}
           profile={profile}
           title={track?.title ?? "soundspace"}
           visualState={visualState}
@@ -307,6 +310,7 @@ export default function App() {
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const player = useYouTubePlayer();
   const landing = selectedTrack === null;
+  const isPlaying = player.playbackState.isPlaying;
   const visibleTrack = player.playbackState.track ?? selectedTrack;
   const playerReady = player.phase === "ready";
   const sliderPosition = seekDraft ?? player.playbackState.positionMs;
@@ -343,16 +347,21 @@ export default function App() {
   const weatherStructure = entered
     ? liveWeatherStructure
     : weatherProgram.pregame;
+  const weatherExpression = isPlaying
+    ? LIVE_WEATHER_EXPRESSION[weatherProgram.classification.primary]
+    : weatherProgram.classification.primary;
   const entryBlend = entryTransition <= 0.32
     ? 0
     : 1 - Math.pow(1 - (entryTransition - 0.32) / 0.68, 3);
-  const worldVisualState = entered
-      ? blendVisualStates(
+  const worldVisualState = !entered
+    ? AMBIENT_VISUAL_STATE
+    : !isPlaying
+      ? weatherProgram.pregame.visualState
+      : blendVisualStates(
         weatherProgram.pregame.visualState,
         musicResponse.visualState,
         entryBlend,
-      )
-    : AMBIENT_VISUAL_STATE;
+      );
   const worldProfile = weatherProgram.pregame.profile;
 
   useEffect(() => {
@@ -384,8 +393,10 @@ export default function App() {
   }, [searchOpen]);
 
   useEffect(() => {
-    if (!entered) return;
-    const startedAt = performance.now();
+    if (!entered || !isPlaying || entryTransition >= 1) return;
+    // The entry timeline is a visual response to playback. Keep its elapsed
+    // time across pauses so pausing does not consume the remaining entrance.
+    const startedAt = performance.now() - entryTransition * 2_800;
     let frameId = 0;
     const updateEntryTransition = (now: number) => {
       const progress = Math.min(1, (now - startedAt) / 2_800);
@@ -394,7 +405,7 @@ export default function App() {
     };
     frameId = requestAnimationFrame(updateEntryTransition);
     return () => cancelAnimationFrame(frameId);
-  }, [entered]);
+  }, [entered, isPlaying]);
 
   useEffect(() => {
     if (!playerReady || !selectedTrack) return;
@@ -555,12 +566,14 @@ export default function App() {
       data-entry-progress={entryTransition.toFixed(3)}
       data-entered={entered}
       data-landing={landing}
+      data-playing={isPlaying}
       data-music-energy={musicResponse.energy.toFixed(3)}
       data-music-event={musicResponse.events.find((event) => event.active)?.kind ?? "none"}
       data-music-pulse={musicResponse.pulse.toFixed(3)}
       data-music-source="authored-playback-clock"
       data-playback-progress={playbackProgress.toFixed(3)}
       data-weather-primary={weatherStructure.profile.primaryPhenomenon}
+      data-weather-expression={weatherExpression}
       data-weather-seed={weatherStructure.profile.seed}
       data-weather-stage={weatherStructure.kind}
       data-weather-confidence={weatherProgram.classification.confidence.toFixed(3)}
@@ -627,8 +640,11 @@ export default function App() {
             onEnter={() => void enterWorld()}
             onExit={exitWorld}
             profile={weatherStructure.profile}
+            playing={isPlaying}
             track={visibleTrack}
-            visualState={weatherStructure.visualState}
+            visualState={isPlaying
+              ? weatherStructure.visualState
+              : weatherProgram.pregame.visualState}
             weather={weatherProgram.classification.primary}
           />
         </div>
@@ -708,8 +724,12 @@ export default function App() {
 
       {!landing ? <aside className="visual-budget" aria-label="visual budget probe">
         <div className="visual-budget__header">
-          <span>weather / {weatherProgram.classification.primary}</span>
-          <strong>{performanceSample ? `${Math.round(performanceSample.fps)} fps` : "sampling"}</strong>
+          <span>weather / {weatherExpression}</span>
+          <strong>{!isPlaying
+            ? "still"
+            : performanceSample
+              ? `${Math.round(performanceSample.fps)} fps`
+              : "sampling"}</strong>
         </div>
         <p>
           {performanceSample
