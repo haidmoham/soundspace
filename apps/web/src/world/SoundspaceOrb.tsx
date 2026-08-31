@@ -234,9 +234,11 @@ function createTitleTexture(
 }
 
 function RainPreview({
+  active,
   profile,
   visualState,
 }: {
+  active: boolean;
   profile: WeatherProfile;
   visualState: VisualState;
 }) {
@@ -253,12 +255,12 @@ function RainPreview({
   const wind = Math.max(baseline.wind * 0.5, visualState.weather.wind);
 
   useFrame((_, delta) => {
-    if (!points.current || precipitation <= 0.01) return;
+    if (!active || !points.current || precipitation <= 0.01) return;
     const frameDelta = Math.min(delta, 1 / 30);
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < positions.count; index += 1) {
-      let y = positions.getY(index) - frameDelta * (0.7 + precipitation * 2.8);
-      let x = positions.getX(index) + frameDelta * wind * 0.32;
+      let y = positions.getY(index) - frameDelta * (0.9 + precipitation * 4.4);
+      let x = positions.getX(index) + frameDelta * wind * 0.6;
       if (y < -2.2) y = 2.75;
       if (x > 2.2) x = -2.2;
       positions.setXY(index, x, y);
@@ -291,9 +293,11 @@ function RainPreview({
 }
 
 function MistPreview({
+  active,
   profile,
   visualState,
 }: {
+  active: boolean;
   profile: WeatherProfile;
   visualState: VisualState;
 }) {
@@ -303,9 +307,9 @@ function MistPreview({
     Math.max(visualState.climate.baseline.haze, visualState.weather.haze);
 
   useFrame(({ clock }) => {
-    if (!group.current) return;
-    group.current.position.x = Math.sin(clock.elapsedTime * 0.08) * 0.24;
-    group.current.rotation.z = Math.cos(clock.elapsedTime * 0.06) * 0.035;
+    if (!active || !group.current) return;
+    group.current.position.x = Math.sin(clock.elapsedTime * 0.18) * 0.3;
+    group.current.rotation.z = Math.cos(clock.elapsedTime * 0.12) * 0.06;
   });
 
   return (
@@ -333,9 +337,11 @@ function MistPreview({
 }
 
 function SnowPreview({
+  active,
   profile,
   visualState,
 }: {
+  active: boolean;
   profile: WeatherProfile;
   visualState: VisualState;
 }) {
@@ -345,14 +351,14 @@ function SnowPreview({
   const presence = membership * visualState.weather.precipitation;
 
   useFrame(({ clock }, delta) => {
-    if (!points.current || presence <= 0.01) return;
+    if (!active || !points.current || presence <= 0.01) return;
     const frameDelta = Math.min(delta, 1 / 30);
     const positions = points.current.geometry.getAttribute("position");
     for (let index = 0; index < positions.count; index += 1) {
-      let y = positions.getY(index) - frameDelta * (0.16 + (index % 7) * 0.035);
+      let y = positions.getY(index) - frameDelta * (0.4 + (index % 7) * 0.05);
       const x =
         data.origins[index * 3]! +
-        Math.sin(clock.elapsedTime * (0.22 + (index % 7) * 0.012) + index) * 0.1;
+        Math.sin(clock.elapsedTime * (0.42 + (index % 7) * 0.02) + index) * 0.16;
       if (y < -2.25) y = 2.8;
       positions.setXY(index, x, y);
     }
@@ -377,9 +383,11 @@ function SnowPreview({
 }
 
 function SunPreview({
+  active,
   profile,
   visualState,
 }: {
+  active: boolean;
   profile: WeatherProfile;
   visualState: VisualState;
 }) {
@@ -388,9 +396,9 @@ function SunPreview({
   const presence = membership * visualState.weather.sunlight;
 
   useFrame(({ clock }) => {
-    if (!group.current) return;
-    group.current.rotation.z = clock.elapsedTime * 0.08;
-    group.current.scale.setScalar(1 + Math.sin(clock.elapsedTime * 2.4) * 0.035);
+    if (!active || !group.current) return;
+    group.current.rotation.z = clock.elapsedTime * 0.26;
+    group.current.scale.setScalar(1 + Math.sin(clock.elapsedTime * 2.8) * 0.07);
   });
 
   return (
@@ -425,6 +433,7 @@ function SunPreview({
 function OrbScene({ active, profile, title, visualState }: SoundspaceOrbProps) {
   const material = useRef<ShaderMaterial>(null);
   const group = useRef<Group>(null);
+  const animationTime = useRef(0);
   const [fontReady, setFontReady] = useState(false);
   const titleTexture = useMemo(
     () => createTitleTexture(title, profile),
@@ -462,12 +471,12 @@ function OrbScene({ active, profile, title, visualState }: SoundspaceOrbProps) {
     [profile.palette],
   );
 
-  useFrame(({ clock }, delta) => {
+  useFrame((_, delta) => {
+    if (active) animationTime.current += Math.min(delta, 1 / 30);
+    const time = animationTime.current;
     if (material.current) {
-      material.current.uniforms.uTime!.value = clock.elapsedTime;
-      const target = active ? 1 : 0;
-      material.current.uniforms.uActive!.value +=
-        (target - material.current.uniforms.uActive!.value) * Math.min(1, delta * 3);
+      material.current.uniforms.uTime!.value = time;
+      material.current.uniforms.uActive!.value = active ? 1 : 0;
       material.current.uniforms.uCloud!.value = Math.max(
         visualState.climate.baseline.cloudCover,
         visualState.weather.cloudCover,
@@ -486,8 +495,11 @@ function OrbScene({ active, profile, title, visualState }: SoundspaceOrbProps) {
       );
     }
     if (group.current && profile.primaryPhenomenon !== "sun") {
-      group.current.rotation.y += delta * (active ? 0.18 : 0.07);
-      group.current.rotation.z = Math.sin(clock.elapsedTime * 0.18) * 0.05;
+      if (active) {
+        group.current.rotation.y += delta * 0.42;
+        group.current.rotation.z = Math.sin(time * 0.5) * 0.08;
+        group.current.scale.setScalar(1 + Math.sin(time * 2.2) * 0.055);
+      }
     }
   });
 
@@ -515,10 +527,10 @@ function OrbScene({ active, profile, title, visualState }: SoundspaceOrbProps) {
             />
           </points>
         ) : null}
-        <MistPreview profile={profile} visualState={visualState} />
-        <RainPreview profile={profile} visualState={visualState} />
-        <SnowPreview profile={profile} visualState={visualState} />
-        <SunPreview profile={profile} visualState={visualState} />
+        <MistPreview active={active} profile={profile} visualState={visualState} />
+        <RainPreview active={active} profile={profile} visualState={visualState} />
+        <SnowPreview active={active} profile={profile} visualState={visualState} />
+        <SunPreview active={active} profile={profile} visualState={visualState} />
       </group>
       <sprite position={[0, -0.02, 1.48]} scale={[3.05, 3.05, 1]}>
         <spriteMaterial depthTest={false} map={titleTexture} transparent />
@@ -533,6 +545,7 @@ export function SoundspaceOrb(props: SoundspaceOrbProps) {
       aria-hidden="true"
       camera={{ fov: 42, position: [0, 0, 5.5] }}
       dpr={[1, 1.6]}
+      frameloop={props.active ? "always" : "demand"}
       gl={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
       style={{ pointerEvents: "none" }}
     >

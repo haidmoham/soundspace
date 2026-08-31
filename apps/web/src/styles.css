@@ -715,6 +715,16 @@ input:focus-visible {
   52% { opacity: 0.72; transform: translate(-50%, -50%) scale(1.08) rotate(4deg); }
 }
 
+/* Playback is the only source of ambient motion. A paused track leaves the
+   whole authored scene at its current frame, including pseudo-elements. */
+.player-shell[data-playing="false"] *,
+.player-shell[data-playing="false"]::before,
+.player-shell[data-playing="false"]::after,
+.player-shell[data-playing="false"] *::before,
+.player-shell[data-playing="false"] *::after {
+  animation-play-state: paused !important;
+}
+
 .artwork-image { display: block; filter: saturate(0.54) contrast(1.06) brightness(0.82); }
 
 .artwork-placeholder {

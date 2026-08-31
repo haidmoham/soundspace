@@ -89,7 +89,7 @@ export function SoundspaceWorld({
       <Canvas
         camera={{ fov: 46, position: [0, 0, 7.2] }}
         dpr={VISUAL_QUALITY[quality].dpr}
-        frameloop="always"
+        frameloop={response.isPlaying ? "always" : "demand"}
         gl={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
         style={{ pointerEvents: "none" }}
       >
@@ -103,7 +103,7 @@ export function SoundspaceWorld({
           response={response}
           visualState={visualState}
         />
-        <RenderBudgetMeter onSample={onPerformanceSample} />
+        {response.isPlaying ? <RenderBudgetMeter onSample={onPerformanceSample} /> : null}
       </Canvas>
     </div>
   );
